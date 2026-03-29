@@ -1,37 +1,572 @@
-# Smart Product Search MVP - Backend Foundation (Stage 1)
+# Smart Product Search MVP - Stage 2: Real Data & Baseline Search
 
-This is the **first stage** of the Smart Product Search MVP backend development. This stage focuses on establishing a clean backend foundation with API contracts, domain models, and data schemas - without implementing actual search logic or complex features.
+This is the **second stage** of the Smart Product Search MVP backend development. This stage implements real catalog loading, baseline search functionality, and production-ready tooling.
 
 ## Project Purpose
 
-This MVP system is designed to provide personalized, intelligent product search capabilities. The backend will support:
-- User queries for smart product search
-- Product catalog management
-- Search result personalization
-- User feedback collection for continuous improvement
+This MVP system provides personalized, intelligent product search capabilities with:
+- Real product catalog loading from XLSX/CSV files
+- Baseline keyword search across product fields
+- RESTful API for product search and retrieval
+- Extensible architecture for future ML/LLM integration
 
-## Current Stage (Stage 1) - Backend Foundation
+## Current Stage (Stage 2) - Real Data & Baseline Search
 
-This stage establishes:
-✅ Project structure and infrastructure  
-✅ Domain models and entities  
-✅ API request/response contracts  
-✅ Endpoint signatures (stubs)  
-✅ Data validation with Pydantic  
-✅ Documentation and testing framework  
+This stage implements:
+✅ **Real catalog loading** from XLSX/CSV files  
+✅ **Characteristics parser** for product specs  
+✅ **In-memory repository** for product storage  
+✅ **Baseline search** across title, manufacturer, model, category, attributes  
+✅ **Real API responses** for `/search` and `/products/{id}`  
+✅ **Sample dataset** for immediate testing  
+✅ **Production tooling** (ruff, black, pre-commit, Makefile)  
+✅ **Comprehensive testing** for all new components  
+
+## What's Working Now
+
+### ✅ Catalog Loading
+- Supports XLSX and CSV formats
+- Maps Russian field names to domain model
+- Robust error handling for missing columns
+- Fallback to sample data if no catalog provided
+
+### ✅ Characteristics Parser
+- Parses strings like `"Ширина профиля:256 мм;Тип:Бескамерная"`
+- Handles malformed entries gracefully
+- Trims whitespace from keys and values
+- Creates structured `ProductAttribute` objects
+
+### ✅ Baseline Search
+- Searches across: title, manufacturer, model, category, attributes
+- Case-insensitive substring matching
+- Pagination support (limit/offset)
+- Returns relevance scores and match reasons
+
+### ✅ API Endpoints
+- `GET /health` - Service health check
+- `POST /search` - Real product search with results
+- `GET /products/{id}` - Real product details retrieval
+- `POST /saved-results` - Stub (persistence in Stage 3)
+- `GET /saved-results` - Stub (persistence in Stage 3)
+- `POST /feedback` - Stub (analytics in Stage 4)
+
+### ✅ Tooling & Quality
+- **ruff** for linting
+- **black** for code formatting
+- **pre-commit** hooks for quality gates
+- **Makefile** for common development tasks
+- **pytest** with comprehensive test coverage
 
 ## NOT Implemented Yet
 
-❌ Actual product search logic  
-❌ NLP/LLM query parsing  
-❌ Product catalog ingestion from Excel  
-❌ Database persistence layer  
+❌ Database persistence (PostgreSQL)  
 ❌ User authentication/authorization  
+❌ Advanced search ranking algorithms  
+❌ NLP/LLM query understanding  
+❌ Search result personalization  
 ❌ Frontend application  
-❌ Search result ranking algorithms  
-❌ Personalization engine  
+❌ Docker deployment  
+❌ Kubernetes orchestration  
 
 ---
+
+## Quick Start
+
+### Prerequisites
+- Python 3.9+
+- pip
+
+### Installation
+
+1. Navigate to the backend directory:
+```bash
+cd backend
+```
+
+2. Install dependencies and development tools:
+```bash
+make install
+# or manually: pip install -r requirements.txt && pre-commit install
+```
+
+### Using Sample Data (Default)
+
+The application comes with sample product data and works out of the box:
+
+```bash
+make run
+# or: python app/main.py
+```
+
+API will be available at: `http://localhost:8000`
+
+### Using Your Own Catalog
+
+1. Create a `.env` file from the example:
+```bash
+cp .env.example .env
+```
+
+2. Set your catalog path:
+```env
+CATALOG_PATH=/path/to/your/catalog.xlsx
+```
+
+3. Run the application:
+```bash
+make run
+```
+
+### Supported Catalog Formats
+
+**XLSX Format:**
+- File extension: `.xlsx`
+- Uses `openpyxl` engine
+
+**CSV Format:**
+- File extension: `.csv`
+- UTF-8 encoding required
+- First row should contain headers
+
+### Required Catalog Fields
+
+| Russian Field | Domain Field | Required | Description |
+|---|---|---|---|
+| `id сте` | `id` | ✅ | Unique product identifier |
+| `название сте` | `title` | ✅ | Product name (searchable) |
+| `производитель` | `manufacturer` | ✅ | Manufacturer (searchable) |
+| `модель` | `model` | ✅ | Model (searchable) |
+| `id категории` | `category_id` | ✅ | Category ID |
+| `название категории` | `category_name` | ✅ | Category name (searchable) |
+| `ссылка на картинку сте` | `image_url` | ❌ | Product image URL |
+| `страна происхождения` | `country_origin` | ❌ | Country of origin |
+| `характеристики` | `attributes_raw` | ❌ | Semicolon-separated specs |
+
+**Notes:**
+- Missing optional fields default to empty strings
+- Application won't crash if optional columns are missing
+- Characteristics field gets parsed into structured attributes
+
+---
+
+## API Usage Examples
+
+### Health Check
+```bash
+curl http://localhost:8000/health
+```
+Response:
+```json
+{
+  "status": "healthy",
+  "version": "0.2.0"
+}
+```
+
+### Product Search
+```bash
+curl -X POST http://localhost:8000/search \
+  -H "Content-Type: application/json" \
+  -d '{
+    "query": "ноутбук hp",
+    "limit": 5,
+    "offset": 0
+  }'
+```
+Response:
+```json
+{
+  "results": [
+    {
+      "product": {
+        "id": "prod_001",
+        "title": "Ноутбук Lenovo ThinkPad",
+        "manufacturer": "Lenovo",
+        "model": "ThinkPad X1 Carbon",
+        "category_id": "cat_001",
+        "category_name": "Ноутбуки",
+        "image_url": "https://example.com/laptop1.jpg",
+        "country_origin": "Китай",
+        "attributes": [
+          {"name": "Процессор", "value": "Intel Core i7"},
+          {"name": "Оперативная память", "value": "16 ГБ"}
+        ],
+        "created_at": "2024-01-01T00:00:00"
+      },
+      "relevance_score": 1.0,
+      "match_reasons": ["Совпадение в названии", "Совпадение в производителе"]
+    }
+  ],
+  "total_count": 1,
+  "query": "ноутбук hp",
+  "limit": 5,
+  "offset": 0
+}
+```
+
+### Get Product Details
+```bash
+curl http://localhost:8000/products/prod_001
+```
+Response: Full product object as shown above.
+
+---
+
+## Development Commands
+
+### Running
+```bash
+make run          # Start development server
+make test         # Run all tests
+make lint         # Run linter (ruff)
+make format       # Format code (black)
+make check        # Run lint + format + test
+make clean        # Clean cache files
+```
+
+### Manual Commands
+```bash
+# Install everything
+pip install -r requirements.txt
+pre-commit install
+
+# Run server
+python app/main.py
+
+# Run tests
+pytest tests/ -v
+
+# Run specific test file
+pytest tests/test_stage2.py -v
+
+# Run linter
+ruff check .
+
+# Format code
+black .
+
+# Run pre-commit hooks
+pre-commit run --all-files
+```
+
+---
+
+## Project Structure (Stage 2)
+
+```
+backend/
+├── app/
+│   ├── __init__.py                    # Package initialization
+│   ├── main.py                        # FastAPI app with catalog loading
+│   ├── config.py                      # Configuration with CATALOG_PATH
+│   │
+│   ├── api/
+│   │   ├── __init__.py
+│   │   └── routes.py                  # API endpoints with real data
+│   │
+│   ├── schemas/
+│   │   ├── __init__.py
+│   │   └── schemas.py                 # Pydantic models (unchanged)
+│   │
+│   ├── domain/
+│   │   ├── __init__.py
+│   │   └── models.py                  # Extended Product model
+│   │
+│   ├── loaders/
+│   │   └── catalog.py                 # XLSX/CSV catalog loader
+│   │
+│   ├── parsers/
+│   │   └── characteristics.py         # Characteristics string parser
+│   │
+│   ├── storage/
+│   │   └── repository.py              # In-memory product repository
+│   │
+│   ├── services/                      # Ready for business logic
+│   ├── repositories/                  # Ready for data persistence
+│   └── utils/                         # Ready for utilities
+│
+├── data/
+│   └── sample_catalog.csv             # Sample product data
+│
+├── tests/
+│   ├── __init__.py
+│   ├── test_api.py                    # Updated API contract tests
+│   └── test_stage2.py                 # New component tests
+│
+├── .env.example                       # Environment variables template
+├── .pre-commit-config.yaml            # Pre-commit hooks config
+├── Makefile                           # Development commands
+├── pytest.ini                         # Test configuration
+├── requirements.txt                   # Python dependencies
+└── README.md                          # This file
+```
+
+---
+
+## Characteristics Parser Details
+
+The parser handles product specifications in the format:
+```
+"Ключ1:Значение1;Ключ2:Значение2;Ключ3:Значение3"
+```
+
+**Features:**
+- Splits by semicolon (`;`)
+- Splits each entry by first colon (`:`)
+- Trims whitespace from keys and values
+- Skips malformed entries (no colon)
+- Handles None/empty inputs gracefully
+
+**Example:**
+```python
+from app.parsers.characteristics import parse_characteristics
+
+result = parse_characteristics("Ширина профиля:256 мм;Тип:Бескамерная")
+# Returns: {"Ширина профиля": "256 мм", "Тип": "Бескамерная"}
+```
+
+---
+
+## Baseline Search Implementation
+
+**Search Fields:**
+1. Product title
+2. Manufacturer name
+3. Model identifier
+4. Category name
+5. Raw characteristics string
+6. Parsed attribute values
+
+**Algorithm:**
+- Convert query to lowercase
+- Check substring presence in searchable text
+- Return all matching products with equal relevance
+- Apply pagination after filtering
+
+**Future Extensions:**
+- TF-IDF scoring
+- Field-specific weights
+- Fuzzy matching
+- Query preprocessing
+
+---
+
+## Sample Dataset
+
+The `data/sample_catalog.csv` contains 10 realistic products with:
+- Russian product names and manufacturers
+- Various categories (laptops, phones, monitors, etc.)
+- Real characteristics strings
+- Mixed required/optional fields
+
+Use this to test the system without providing your own catalog.
+
+---
+
+## Testing
+
+### Test Coverage
+- **API contracts** - All endpoints return correct schemas
+- **Characteristics parser** - Handles all edge cases
+- **Catalog loader** - XLSX/CSV loading and field mapping
+- **Repository** - CRUD operations and search functionality
+- **Search functionality** - Real queries return real results
+
+### Running Tests
+```bash
+# All tests
+make test
+
+# Specific test file
+pytest tests/test_stage2.py -v
+
+# With coverage
+pytest tests/ --cov=app --cov-report=html
+```
+
+---
+
+## Configuration
+
+### Environment Variables
+
+Create `.env` file in the backend directory:
+
+```env
+# Optional: Path to your catalog file
+CATALOG_PATH=/path/to/your/products.xlsx
+
+# Optional: Server configuration
+HOST=0.0.0.0
+PORT=8000
+DEBUG=True
+```
+
+### Catalog Path Resolution
+
+1. If `CATALOG_PATH` is set and file exists → Load from file
+2. If `CATALOG_PATH` is set but file doesn't exist → Use sample data
+3. If `CATALOG_PATH` is not set → Use sample data
+
+---
+
+## Architecture Notes
+
+### Clean Architecture Layers
+
+1. **API Layer** (`app/api/`) - HTTP request/response handling
+2. **Schema Layer** (`app/schemas/`) - Data validation and serialization
+3. **Domain Layer** (`app/domain/`) - Business entities and rules
+4. **Service Layer** (`app/services/`) - Business logic (future)
+5. **Repository Layer** (`app/repositories/`) - Data access abstraction (future)
+6. **Storage Layer** (`app/storage/`) - Current in-memory implementation
+
+### Extensibility Points
+
+- **Loaders**: Easy to add new file formats (JSON, XML, etc.)
+- **Parsers**: Modular parsing for different data formats
+- **Repository**: Interface allows switching to database storage
+- **Search**: Baseline implementation ready for algorithm upgrades
+
+### Production Readiness
+
+- **Error handling**: Graceful degradation on data issues
+- **Logging**: Startup and error logging implemented
+- **Configuration**: Environment-based config
+- **Testing**: Comprehensive test coverage
+- **Tooling**: Professional development workflow
+
+---
+
+## Stage 2: What's Included ✅
+
+- ✅ **Real catalog loading** from XLSX/CSV with field mapping
+- ✅ **Characteristics parser** with robust error handling
+- ✅ **In-memory repository** with search capabilities
+- ✅ **Baseline search** across all product fields
+- ✅ **Real API responses** for search and product retrieval
+- ✅ **Sample dataset** for immediate testing
+- ✅ **Production tooling** (linting, formatting, pre-commit)
+- ✅ **Comprehensive testing** for all components
+- ✅ **Configuration management** with environment variables
+- ✅ **Error handling** and graceful degradation
+- ✅ **Logging** for debugging and monitoring
+- ✅ **Architecture ready for future auth-service splitting** via clean layers
+- ✅ **Docker-friendly config** (CATALOG_PATH + env vars) for later containerization
+
+---
+
+## Stage 2: What's NOT Included ❌
+
+### Coming in Stage 3 (Database & Persistence):
+- PostgreSQL database setup
+- SQLAlchemy ORM models
+- Database migrations
+- Persistent user data storage
+- Connection pooling
+
+### Coming in Stage 4 (Advanced Search):
+- Query preprocessing and normalization
+- TF-IDF scoring and ranking
+- Fuzzy string matching
+- Multi-field relevance weighting
+- Search result caching
+
+### Coming in Stage 5 (ML/LLM Integration):
+- NLP query understanding
+- Semantic search capabilities
+- Query intent classification
+- Personalized recommendations
+- A/B testing framework
+
+### Future Stages:
+- User authentication/authorization
+- Frontend application
+- Docker containerization
+- Kubernetes deployment
+- Advanced analytics
+- API rate limiting
+
+---
+
+## Next Steps (Stage 3+)
+
+1. **Database Integration**
+   - Add PostgreSQL and SQLAlchemy
+   - Create database schema
+   - Implement persistent repositories
+
+2. **User Management**
+   - Add user authentication
+   - Implement user sessions
+   - Store user preferences
+
+3. **Enhanced Search**
+   - Implement advanced ranking algorithms
+   - Add search result caching
+   - Improve query preprocessing
+
+4. **Personalization**
+   - User behavior tracking
+   - Personalized recommendations
+   - Search history and preferences
+
+---
+
+## Troubleshooting
+
+### Import Errors
+Ensure you're in the `backend` directory and virtual environment is activated.
+
+### Catalog Loading Issues
+- Check file path in `.env`
+- Verify XLSX/CSV format and encoding
+- Check column headers match expected Russian names
+
+### Search Returns No Results
+- Try simpler queries (single words)
+- Check sample data is loading (API logs)
+- Verify query matches product field content
+
+### Port Already in Use
+Change port in `.env`: `PORT=8001`
+
+### Tests Failing
+```bash
+# Reinstall dependencies
+pip install -r requirements.txt
+
+# Clear cache
+make clean
+```
+
+---
+
+## API Documentation Access
+
+- **Swagger UI**: `http://localhost:8000/docs`
+- **ReDoc**: `http://localhost:8000/redoc`
+- **OpenAPI JSON**: `http://localhost:8000/openapi.json`
+
+---
+
+## License
+
+This project is internal MVP development.
+
+---
+
+## Contact & Questions
+
+For questions about Stage 2 implementation or architecture decisions, refer to the documentation above or review the code comments.
+
+**Key files to review:**
+- `app/loaders/catalog.py` - Catalog loading logic
+- `app/parsers/characteristics.py` - Characteristics parsing
+- `app/storage/repository.py` - Repository and search implementation
+- `app/api/routes.py` - Updated API endpoints
+- `tests/test_stage2.py` - Component tests
+- `data/sample_catalog.csv` - Sample data format
 
 ## Quick Start
 

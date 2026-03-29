@@ -1,0 +1,11 @@
+id сте,название сте,ссылка на картинку сте,модель,страна происхождения,производитель,id категории,название категории,характеристики
+prod_001,Ноутбук Lenovo ThinkPad,https://example.com/laptop1.jpg,ThinkPad X1 Carbon,Китай,Lenovo,cat_001,Ноутбуки,Процессор:Intel Core i7;Оперативная память:16 ГБ;Жесткий диск:1 ТБ SSD;Экран:14 дюймов
+prod_002,Смартфон iPhone 15,https://example.com/phone1.jpg,iPhone 15 Pro,Китай,Apple,cat_002,Смартфоны,Экран:6.1 дюйм;Камера:48 МП;Батарея:3274 мАч;Процессор:A17 Pro
+prod_003,Монитор Dell UltraSharp,https://example.com/monitor1.jpg,U2720Q,Китай,Dell,cat_003,Мониторы,Разрешение:3840x2160;Частота:60 Гц;Тип матрицы:IPS;Размер:27 дюймов
+prod_004,Клавиатура Logitech MX Keys,https://example.com/keyboard1.jpg,MX Keys,Швейцария,Logitech,cat_004,Клавиатуры,Переключатели:Мембранные;Подсветка:Белая;Интерфейс:Bluetooth;Батарея:5 месяцев
+prod_005,Мышь Razer DeathAdder,https://example.com/mouse1.jpg,DeathAdder V3 Pro,Китай,Razer,cat_005,Мыши,DPI:30000;Количество кнопок:5;Датчик:Optical;Батарея:90 часов
+prod_006,Наушники Sony WH-1000XM5,https://example.com/headphones1.jpg,WH-1000XM5,Малайзия,Sony,cat_006,Наушники,Тип:Беспроводные;Время работы:30 часов;Шумоподавление:Активное;Вес:250 г
+prod_007,Планшет Samsung Galaxy Tab S9,https://example.com/tablet1.jpg,Galaxy Tab S9,Южная Корея,Samsung,cat_007,Планшеты,Экран:11 дюймов;Процессор:Snapdragon 8 Gen 2;Оперативная память:8 ГБ;Хранение:128 ГБ
+prod_008,Принтер HP LaserJet,https://example.com/printer1.jpg,LaserJet Pro M182nw,Китай,HP,cat_008,Принтеры,Тип:Лазерный;Скорость печати:20 стр/мин;Разрешение:1200x1200;Интерфейс:Wi-Fi
+prod_009,Внешний жесткий диск WD,https://example.com/hdd1.jpg,My Passport 2TB,Таиланд,Western Digital,cat_009,Хранение данных,Объем:2 ТБ;Интерфейс:USB 3.0;Скорость:5400 об/мин;Размер:2.5 дюйма
+prod_010,Видеокарта NVIDIA RTX 4070,https://example.com/gpu1.jpg,RTX 4070,Китай,NVIDIA,cat_010,Видеокарты,VRAM:12 ГБ;Частота:1920 МГц;Интерфейс:PCIe 4.0;Энергопотребление:200 Вт

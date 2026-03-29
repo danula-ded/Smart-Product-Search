@@ -4,7 +4,7 @@ API routes and endpoints.
 Contains all endpoint implementations.
 """
 
-from fastapi import APIRouter, Query, Path, Body
+from fastapi import APIRouter, Query, Path, Body, HTTPException
 from typing import Optional, List
 
 from app.schemas import (
@@ -19,6 +19,7 @@ from app.schemas import (
     FeedbackResponseSchema,
 )
 from app.config import settings
+from app.storage.repository import product_repository
 
 router = APIRouter()
 
@@ -55,16 +56,16 @@ async def health_check() -> HealthResponse:
     response_model=SearchResponseSchema,
     tags=["Search"],
     summary="Search products",
-    description="Perform a personalized product search based on user query"
+    description="Perform a baseline product search based on user query"
 )
 async def search(
     request: SearchRequestSchema = Body(...),
 ) -> SearchResponseSchema:
     """
-    Search for products.
+    Search for products using baseline search.
     
-    On this MVP stage, returns an empty results list.
-    The actual search logic will be implemented in the next stage.
+    Searches in product title, manufacturer, model, category, and attributes.
+    Returns paginated results with relevance information.
     
     Args:
         request: Search request containing query, filters, and pagination parameters
@@ -72,10 +73,55 @@ async def search(
     Returns:
         Search response with matched products and metadata
     """
-    # Stub implementation - returns empty results for MVP stage
+    from app.schemas import SearchResultSchema
+    
+    # Perform search
+    search_result = product_repository.search_products(
+        query=request.query,
+        limit=request.limit,
+        offset=request.offset
+    )
+    
+    # Convert domain objects to schema objects
+    results = []
+    for product in search_result["results"]:
+        # Create match reasons (simplified for baseline)
+        match_reasons = []
+        if request.query.lower() in product.title.lower():
+            match_reasons.append("Совпадение в названии")
+        if request.query.lower() in product.manufacturer.lower():
+            match_reasons.append("Совпадение в производителе")
+        if request.query.lower() in product.model.lower():
+            match_reasons.append("Совпадение в модели")
+        if request.query.lower() in product.category_name.lower():
+            match_reasons.append("Совпадение в категории")
+        if not match_reasons:
+            match_reasons.append("Совпадение в характеристиках")
+        
+        result_item = SearchResultSchema(
+            product=ProductSchema(
+                id=product.id,
+                title=product.title,
+                manufacturer=product.manufacturer,
+                model=product.model,
+                category_id=product.category_id,
+                category_name=product.category_name,
+                image_url=product.image_url,
+                country_origin=product.country_origin,
+                attributes=[
+                    {"name": attr.name, "value": attr.value}
+                    for attr in product.attributes
+                ],
+                created_at=product.created_at
+            ),
+            relevance_score=1.0,  # Baseline search - all matches have same relevance
+            match_reasons=match_reasons
+        )
+        results.append(result_item)
+    
     return SearchResponseSchema(
-        results=[],
-        total_count=0,
+        results=results,
+        total_count=search_result["total_count"],
         query=request.query,
         limit=request.limit,
         offset=request.offset
@@ -95,27 +141,35 @@ async def get_product(
     """
     Get product by ID.
     
-    On this MVP stage, returns a stub response.
-    The actual product retrieval will be implemented in the next stage.
+    Retrieves product details from the catalog repository.
     
     Args:
         product_id: The ID of the product to retrieve
         
     Returns:
         Product details
+        
+    Raises:
+        HTTPException: If product not found
     """
-    # Stub implementation - returns mock response for MVP stage
+    product = product_repository.get_product_by_id(product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    
     return ProductSchema(
-        id=product_id,
-        title="[Stub] Product Title",
-        manufacturer="[Stub] Manufacturer",
-        model="[Stub] Model",
-        category_id="stub_cat_001",
-        category_name="[Stub] Category",
-        image_url="https://placeholder.com/product.jpg",
-        country_origin="[Stub] Country",
-        attributes=[],
-        created_at="2024-01-01T00:00:00"
+        id=product.id,
+        title=product.title,
+        manufacturer=product.manufacturer,
+        model=product.model,
+        category_id=product.category_id,
+        category_name=product.category_name,
+        image_url=product.image_url,
+        country_origin=product.country_origin,
+        attributes=[
+            {"name": attr.name, "value": attr.value}
+            for attr in product.attributes
+        ],
+        created_at=product.created_at
     )
 
 

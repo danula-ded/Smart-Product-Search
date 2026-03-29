@@ -42,8 +42,31 @@ class Product:
     category_name: str
     image_url: str
     country_origin: str
-    attributes: List[ProductAttribute] = field(default_factory=list)
     created_at: datetime = field(default_factory=datetime.utcnow)
+    attributes: List[ProductAttribute] = field(default_factory=list)
+    # Raw data from catalog
+    attributes_raw: Optional[str] = None  # Raw characteristics string
+    # Normalized searchable text (for baseline search)
+    searchable_text: str = field(init=False)
+    
+    def __post_init__(self):
+        """Normalize searchable text after initialization."""
+        self.searchable_text = self._build_searchable_text()
+    
+    def _build_searchable_text(self) -> str:
+        """Build normalized searchable text from all relevant fields."""
+        parts = [
+            self.title,
+            self.manufacturer,
+            self.model,
+            self.category_name,
+        ]
+        # Add attribute values
+        for attr in self.attributes:
+            parts.append(attr.name)
+            parts.append(attr.value)
+        # Join and normalize
+        return " ".join(filter(None, parts)).lower()
 
 
 @dataclass

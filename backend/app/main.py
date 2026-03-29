@@ -5,9 +5,16 @@ FastAPI application entry point.
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+import logging
 
 from app.config import settings
 from app.api import router
+from app.loaders.catalog import CatalogLoader
+from app.storage.repository import product_repository
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
@@ -27,6 +34,16 @@ app.add_middleware(
 
 # Include routes
 app.include_router(router)
+
+
+# Load catalog on startup
+@app.on_event("startup")
+async def load_catalog():
+    """Load product catalog on application startup."""
+    loader = CatalogLoader(settings.CATALOG_PATH)
+    products = loader.load_catalog()
+    product_repository.load_products(products)
+    logger.info(f"Loaded {len(products)} products into repository")
 
 
 # Custom OpenAPI schema for better documentation

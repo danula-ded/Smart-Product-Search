@@ -1,14 +1,21 @@
 # FastAPI and server
-fastapi==0.104.1
-uvicorn==0.24.0
+fastapi==0.115.6
+uvicorn==0.32.1
 
-# Pydantic for data validation
-pydantic==2.4.2
+# Pydantic for data validation (compatible with Python 3.14)
+pydantic==2.10.3
+
+# Data processing (let pip choose compatible versions for Python 3.14)
+pandas
+openpyxl
 
 # Testing
-pytest==7.4.3
-pytest-asyncio==0.21.1
-httpx==0.25.1
+pytest==8.3.4
+pytest-asyncio==0.25.1
+httpx==0.28.1
 
-# Development
-python-dotenv==1.0.0
+# Development tooling
+python-dotenv==1.0.1
+ruff==0.8.4
+black==24.10.0
+pre-commit==3.5.0
