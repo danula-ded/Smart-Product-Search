@@ -1,0 +1,67 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --font-heading: var(--font-sans);
+  --font-sans: 'Geist Variable', sans-serif;
+}
+
+:root {
+  color-scheme: light;
+  --radius: 0.75rem;
+  --background: var(--semantic-background-main);
+  --foreground: var(--semantic-text-primary);
+  --card: var(--semantic-background-card);
+  --card-foreground: var(--semantic-text-primary);
+  --popover: var(--semantic-background-elevated);
+  --popover-foreground: var(--semantic-text-primary);
+  --primary: var(--semantic-button-primary);
+  --primary-foreground: var(--semantic-text-on-accent);
+  --secondary: var(--semantic-background-info);
+  --secondary-foreground: var(--semantic-text-primary);
+  --muted: var(--semantic-background-section);
+  --muted-foreground: var(--semantic-text-secondary);
+  --accent: var(--semantic-background-accent);
+  --accent-foreground: var(--semantic-text-primary);
+  --destructive: var(--semantic-status-danger);
+  --destructive-foreground: var(--semantic-text-on-accent);
+  --border: var(--semantic-border-default);
+  --input: var(--semantic-border-muted);
+  --ring: var(--color-secondary-blue-hover);
+  --chart-1: var(--color-primary-main);
+  --chart-2: var(--color-secondary-blue-main);
+  --chart-3: var(--color-secondary-lime-emphasis);
+  --chart-4: var(--color-primary-hover);
+  --chart-5: var(--color-secondary-blue-hover);
+}
