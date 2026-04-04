@@ -70,6 +70,7 @@ class SearchService:
         limit: int,
         offset: int,
         include_debug: bool,
+        filters: dict[str, list[str]] | None = None,
         enable_personalization: bool = True,
         track_event: bool = True,
     ) -> dict[str, Any]:
@@ -88,6 +89,8 @@ class SearchService:
                 "parserSource": "rule_based",
                 "profileSummary": self.get_profile_summary(customer_id),
                 "results": [],
+                "facets": {},
+                "appliedFilters": {},
                 "totalCount": 0,
                 "limit": limit,
                 "offset": offset,
@@ -121,6 +124,10 @@ class SearchService:
         ]
         ranked = [item for item in ranked if item["score"] > 0]
         ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
+        active_filters = self._normalize_filters(filters or {})
+        if active_filters:
+            ranked = self._apply_filters(ranked, active_filters)
+        facets = self._build_facets(ranked)
         rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
 
         if track_event and session_id:
@@ -144,6 +151,8 @@ class SearchService:
             "parserSource": "rule_based",
             "profileSummary": self.get_profile_summary(customer_id),
             "results": ranked[offset : offset + limit],
+            "facets": facets,
+            "appliedFilters": active_filters,
             "totalCount": len(ranked),
             "limit": limit,
             "offset": offset,
@@ -153,6 +162,18 @@ class SearchService:
                 "rerank": rerank_ms,
                 "total": int((perf_counter() - started_at) * 1000),
             },
+        }
+
+    def analyze_query(self, query: str) -> dict[str, Any]:
+        context = self._normalize_query(query)
+        return {
+            "query": query,
+            "normalizedQuery": context.normalized_query,
+            "correctedQuery": context.corrected_query,
+            "appliedSynonyms": context.applied_synonyms,
+            "searchTermsUsed": context.retrieval_tokens,
+            "queryInterpretation": self._query_interpretation_payload(context),
+            "parserSource": "rule_based",
         }
 
     def get_product(self, product_id: str) -> dict[str, Any] | None:
@@ -841,3 +862,96 @@ class SearchService:
             seen.add(key)
             unique_attributes.append(attr)
         return unique_attributes
+
+    def _normalize_filters(self, filters: dict[str, list[str]]) -> dict[str, list[str]]:
+        normalized: dict[str, list[str]] = {}
+        for key, values in filters.items():
+            cleaned = [str(value).strip() for value in values if str(value).strip()]
+            if cleaned:
+                normalized[key] = list(dict.fromkeys(cleaned))
+        return normalized
+
+    def _apply_filters(
+        self,
+        ranked: list[dict[str, Any]],
+        filters: dict[str, list[str]],
+    ) -> list[dict[str, Any]]:
+        categories = set(filters.get("categories", []))
+        brands = set(filters.get("brands", []))
+        attribute_pairs = set(filters.get("attributes", []))
+
+        filtered: list[dict[str, Any]] = []
+        for item in ranked:
+            product = item["product"]
+            attributes = product.get("attributes", [])
+            if categories and product["category"] not in categories:
+                continue
+            if brands and (product.get("brandGuess") or "Без бренда") not in brands:
+                continue
+            if attribute_pairs:
+                product_attribute_pairs = {
+                    f"{attribute['name']}::{attribute['value']}" for attribute in attributes
+                }
+                if not attribute_pairs.issubset(product_attribute_pairs):
+                    continue
+            filtered.append(item)
+        return filtered
+
+    def _build_facets(self, ranked: list[dict[str, Any]]) -> dict[str, Any]:
+        category_counts: dict[str, int] = {}
+        brand_counts: dict[str, int] = {}
+        attribute_groups: dict[str, dict[str, int]] = {}
+
+        for item in ranked[:120]:
+            product = item["product"]
+            category = product["category"]
+            brand = product.get("brandGuess") or "Без бренда"
+            category_counts[category] = category_counts.get(category, 0) + 1
+            brand_counts[brand] = brand_counts.get(brand, 0) + 1
+
+            for attribute in product.get("attributes", [])[:8]:
+                name = attribute["name"]
+                value = attribute["value"]
+                if len(value) > 64:
+                    continue
+                group = attribute_groups.setdefault(name, {})
+                group[value] = group.get(value, 0) + 1
+
+        top_attribute_groups = sorted(
+            attribute_groups.items(),
+            key=lambda item: (-sum(item[1].values()), item[0]),
+        )[:4]
+
+        return {
+            "categories": [
+                {"value": value, "count": count}
+                for value, count in sorted(
+                    category_counts.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:8]
+            ],
+            "brands": [
+                {"value": value, "count": count}
+                for value, count in sorted(
+                    brand_counts.items(),
+                    key=lambda item: (-item[1], item[0]),
+                )[:8]
+            ],
+            "attributes": [
+                {
+                    "name": name,
+                    "values": [
+                        {
+                            "value": value,
+                            "count": count,
+                            "key": f"{name}::{value}",
+                        }
+                        for value, count in sorted(
+                            values.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )[:6]
+                    ],
+                }
+                for name, values in top_attribute_groups
+            ],
+        }

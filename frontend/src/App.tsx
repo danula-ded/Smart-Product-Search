@@ -1,6 +1,20 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useDeferredValue, useEffect, useMemo, useState, type ReactNode } from 'react'
+import {
+  ArrowDownRight,
+  ArrowUpRight,
+  BadgeCheck,
+  Database,
+  Filter,
+  FolderSync,
+  Loader2,
+  RefreshCcw,
+  Search,
+  Trash2,
+  UserRound,
+} from 'lucide-react'
 
 import {
+  analyzeSearchQuery,
   bootstrapDefaultDataset,
   clearDataset,
   getDatasetSummary,
@@ -11,993 +25,1515 @@ import {
   searchProducts,
   sendEvent,
   uploadDatasets,
+  type DatasetJob,
+  type DatasetSummary,
+  type DemoProfile,
+  type Health,
+  type MetricsSummary,
+  type SearchAnalysisResponse,
+  type SearchFacetBucket,
+  type SearchFacetGroup,
+  type SearchFilters,
+  type SearchResponse,
+  type SearchResult,
   type UploadMode,
-} from './api';
+} from './api'
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardAction,
+  CardContent,
+  CardDescription,
+  CardFooter,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { Separator } from '@/components/ui/separator'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-type TabId = 'search' | 'data' | 'dynamics' | 'metrics';
+type TabId = 'search' | 'dynamics' | 'metrics' | 'data'
 
-const tabs: Array<{ id: TabId; label: string }> = [
-  { id: 'search', label: 'Поиск' },
-  { id: 'data', label: 'Данные' },
-  { id: 'dynamics', label: 'Динамика' },
-  { id: 'metrics', label: 'Метрики' },
-];
-
-const incrementalModes: Array<{ value: UploadMode; label: string }> = [
-  { value: 'upsert_ste', label: 'Дозагрузить или обновить СТЕ' },
-  { value: 'append_contracts', label: 'Дозагрузить контракты' },
-  { value: 'upsert_bundle', label: 'Дозагрузить оба файла' },
-];
+const incrementalModes: Array<{ value: UploadMode; label: string; description: string }> = [
+  {
+    value: 'upsert_ste',
+    label: 'СТЕ',
+    description: 'Добавить или обновить товары каталога.',
+  },
+  {
+    value: 'append_contracts',
+    label: 'Контракты',
+    description: 'Дозагрузить историю закупок и перестроить профили.',
+  },
+  {
+    value: 'upsert_bundle',
+    label: 'Оба файла',
+    description: 'Обновить и каталог, и историю закупок за один проход.',
+  },
+]
 
 function createSessionId() {
-  return `session-${Math.random().toString(36).slice(2, 10)}`;
-}
-
-function cx(...values: Array<string | false | null | undefined>) {
-  return values.filter(Boolean).join(' ');
+  return `session-${Math.random().toString(36).slice(2, 10)}`
 }
 
 function formatNumber(value: number | null | undefined) {
-  return new Intl.NumberFormat('ru-RU').format(value ?? 0);
+  return new Intl.NumberFormat('ru-RU').format(value ?? 0)
+}
+
+function formatMoney(value: number | null | undefined) {
+  return new Intl.NumberFormat('ru-RU', {
+    maximumFractionDigits: 0,
+  }).format(value ?? 0)
 }
 
 function formatMetric(value: number | null | undefined) {
   if (value == null) {
-    return '0.0000';
+    return '0.0000'
   }
-  return value.toFixed(4);
+  return value.toFixed(4)
 }
 
-function Card(props: {
-  title: string;
-  description?: string;
-  action?: ReactNode;
-  children: ReactNode;
-  className?: string;
-}) {
+function countActiveFilters(filters: SearchFilters) {
   return (
-    <section className={cx('card', props.className)}>
-      <header className="card-header">
-        <div>
-          <h3>{props.title}</h3>
-          {props.description ? <p className="card-description">{props.description}</p> : null}
+    (filters.categories?.length ?? 0) +
+    (filters.brands?.length ?? 0) +
+    (filters.attributes?.length ?? 0)
+  )
+}
+
+function asText(value: unknown) {
+  return typeof value === 'string' ? value : ''
+}
+
+function toggleArrayValue(values: string[] | undefined, value: string, checked: boolean) {
+  const current = new Set(values ?? [])
+  if (checked) {
+    current.add(value)
+  } else {
+    current.delete(value)
+  }
+  return Array.from(current)
+}
+
+function CompactStat(props: { label: string; value: string | number; icon?: ReactNode }) {
+  return (
+    <div className="rounded-xl border bg-card px-4 py-3">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        {props.icon}
+        <span>{props.label}</span>
+      </div>
+      <div className="mt-2 text-lg font-semibold tracking-tight">{props.value}</div>
+    </div>
+  )
+}
+
+function MetricDeltaCard(props: {
+  label: string
+  baseline: number | null | undefined
+  personalized: number | null | undefined
+}) {
+  const baseline = props.baseline ?? 0
+  const personalized = props.personalized ?? 0
+  const delta = personalized - baseline
+  const direction = delta >= 0 ? 'up' : 'down'
+
+  return (
+    <Card size="sm">
+      <CardHeader className="pb-0">
+        <CardTitle>{props.label}</CardTitle>
+        <CardDescription>Baseline против персонализации</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="grid grid-cols-2 gap-3 text-sm">
+          <div className="rounded-lg border bg-muted/40 p-3">
+            <div className="text-xs text-muted-foreground">Baseline</div>
+            <div className="mt-1 font-medium">{formatMetric(baseline)}</div>
+          </div>
+          <div className="rounded-lg border bg-muted/40 p-3">
+            <div className="text-xs text-muted-foreground">Personalized</div>
+            <div className="mt-1 font-medium">{formatMetric(personalized)}</div>
+          </div>
         </div>
-        {props.action ? <div className="card-action">{props.action}</div> : null}
-      </header>
-      {props.children}
-    </section>
-  );
+        <div className="rounded-lg border px-3 py-2 text-sm">
+          <div className="flex items-center gap-2 font-medium">
+            {direction === 'up' ? (
+              <ArrowUpRight className="size-4 text-emerald-600" />
+            ) : (
+              <ArrowDownRight className="size-4 text-destructive" />
+            )}
+            <span>{delta >= 0 ? '+' : ''}{delta.toFixed(4)}</span>
+          </div>
+          <div className="mt-2 h-2 rounded-full bg-muted">
+            <div
+              className="h-2 rounded-full bg-primary"
+              style={{ width: `${Math.max(6, Math.min(100, personalized * 100))}%` }}
+            />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  )
 }
 
-function Button(props: {
-  children: ReactNode;
-  onClick?: () => void;
-  disabled?: boolean;
-  type?: 'button' | 'submit';
-  variant?: 'primary' | 'secondary' | 'danger' | 'ghost';
-  className?: string;
+function FilterBucket(props: {
+  checked: boolean
+  bucket: SearchFacetBucket
+  onChange: (checked: boolean) => void
 }) {
-  const variant = props.variant ?? 'primary';
   return (
-    <button
-      className={cx('button', `button-${variant}`, props.className)}
-      disabled={props.disabled}
-      onClick={props.onClick}
-      type={props.type ?? 'button'}
-    >
-      {props.children}
-    </button>
-  );
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border px-3 py-2 text-sm transition-colors hover:bg-muted/40">
+      <Checkbox checked={props.checked} onCheckedChange={(value) => props.onChange(Boolean(value))} />
+      <div className="min-w-0 flex-1">
+        <div className="truncate font-medium">{props.bucket.value}</div>
+        <div className="text-xs text-muted-foreground">{formatNumber(props.bucket.count)}</div>
+      </div>
+    </label>
+  )
 }
 
-function Badge(props: { children: ReactNode; tone?: 'default' | 'soft' | 'danger' | 'olive' }) {
-  const tone = props.tone ?? 'default';
-  return <span className={cx('badge', `badge-${tone}`)}>{props.children}</span>;
-}
+function SearchResultCard(props: {
+  result: SearchResult
+  position: number
+  onOpen: () => void
+  onRelevant: () => void
+  onIrrelevant: () => void
+  onBounce: () => void
+  onSave: () => void
+  onDetails: () => void
+}) {
+  const topFactors = props.result.scoreBreakdown?.slice(0, 3) ?? []
 
-function StatTile(props: { label: string; value: string | number; hint?: string }) {
   return (
-    <div className="stat-tile">
-      <span>{props.label}</span>
-      <strong>{props.value}</strong>
-      {props.hint ? <small>{props.hint}</small> : null}
-    </div>
-  );
-}
-
-function EmptyState(props: { title: string; description: string; action?: ReactNode }) {
-  return (
-    <div className="empty-state">
-      <h3>{props.title}</h3>
-      <p>{props.description}</p>
-      {props.action ? <div className="inline-actions">{props.action}</div> : null}
-    </div>
-  );
+    <Card className="h-full border-border/80 shadow-sm">
+      <CardHeader>
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant="secondary">#{props.position}</Badge>
+              <Badge variant="outline">{props.result.product.category}</Badge>
+              {props.result.product.brandGuess ? (
+                <Badge variant="outline">{props.result.product.brandGuess}</Badge>
+              ) : null}
+            </div>
+            <CardTitle className="text-balance leading-6">{props.result.product.title}</CardTitle>
+          </div>
+          <CardAction>
+            <div className="rounded-lg border bg-muted/40 px-3 py-1.5 text-right">
+              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">score</div>
+              <div className="text-sm font-semibold">{props.result.score.toFixed(2)}</div>
+            </div>
+          </CardAction>
+        </div>
+        <CardDescription>{props.result.explanation}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap gap-2">
+          {props.result.product.attributes.slice(0, 5).map((attribute) => (
+            <Badge
+              key={`${props.result.product.id}-${attribute.name}-${attribute.value}`}
+              variant="secondary"
+              className="max-w-full"
+            >
+              <span className="truncate">
+                {attribute.name}: {attribute.value}
+              </span>
+            </Badge>
+          ))}
+        </div>
+        {topFactors.length > 0 ? (
+          <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+            <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Факторы ранжирования
+            </div>
+            <div className="space-y-2 text-sm">
+              {topFactors.map((factor) => (
+                <div
+                  key={`${props.result.product.id}-${factor.type}-${factor.reason}`}
+                  className="flex items-start justify-between gap-3"
+                >
+                  <div className="min-w-0 text-balance text-foreground/90">{factor.reason}</div>
+                  <div className="shrink-0 font-medium text-foreground/70">
+                    +{factor.value.toFixed(2)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </CardContent>
+      <CardFooter className="flex flex-wrap items-center gap-2">
+        <Button size="sm" onClick={props.onOpen}>
+          Открыть
+        </Button>
+        <Button size="sm" variant="outline" onClick={props.onRelevant}>
+          Релевантно
+        </Button>
+        <Button size="sm" variant="outline" onClick={props.onSave}>
+          Сохранить
+        </Button>
+        <Button size="sm" variant="outline" onClick={props.onDetails}>
+          Детали
+        </Button>
+        <Button size="sm" variant="outline" onClick={props.onBounce}>
+          Быстрый возврат
+        </Button>
+        <Button size="sm" variant="destructive" onClick={props.onIrrelevant}>
+          Не релевантно
+        </Button>
+      </CardFooter>
+    </Card>
+  )
 }
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabId>('search');
-  const [health, setHealth] = useState<{ status: string; version: string } | null>(null);
-  const [summary, setSummary] = useState<any | null>(null);
-  const [profiles, setProfiles] = useState<any[]>([]);
-  const [metrics, setMetrics] = useState<any | null>(null);
-  const [metricsLoading, setMetricsLoading] = useState(false);
-  const [loadingData, setLoadingData] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<TabId>('search')
+  const [health, setHealth] = useState<Health | null>(null)
+  const [summary, setSummary] = useState<DatasetSummary | null>(null)
+  const [profiles, setProfiles] = useState<DemoProfile[]>([])
+  const [metrics, setMetrics] = useState<MetricsSummary | null>(null)
+  const [metricsLoading, setMetricsLoading] = useState(false)
+  const [loadingData, setLoadingData] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
-  const [mode, setMode] = useState<UploadMode>('upsert_bundle');
-  const [steFile, setSteFile] = useState<File | null>(null);
-  const [contractsFile, setContractsFile] = useState<File | null>(null);
-  const [jobState, setJobState] = useState<any | null>(null);
-  const [datasetBusy, setDatasetBusy] = useState(false);
+  const [mode, setMode] = useState<UploadMode>('upsert_bundle')
+  const [steFile, setSteFile] = useState<File | null>(null)
+  const [contractsFile, setContractsFile] = useState<File | null>(null)
+  const [jobState, setJobState] = useState<DatasetJob | null>(null)
+  const [datasetBusy, setDatasetBusy] = useState(false)
 
-  const [query, setQuery] = useState('aktirf smartbuy 16');
-  const [selectedCustomer, setSelectedCustomer] = useState('');
-  const [sessionId, setSessionId] = useState(createSessionId());
-  const [includeDebug, setIncludeDebug] = useState(true);
-  const [searchState, setSearchState] = useState<any | null>(null);
-  const [previousSearchState, setPreviousSearchState] = useState<any | null>(null);
-  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('aktirf smartbuy 16')
+  const [selectedCustomer, setSelectedCustomer] = useState('')
+  const [sessionId, setSessionId] = useState(createSessionId())
+  const [includeDebug, setIncludeDebug] = useState(true)
+  const [filters, setFilters] = useState<SearchFilters>({})
+  const [searchState, setSearchState] = useState<SearchResponse | null>(null)
+  const [previousSearchState, setPreviousSearchState] = useState<SearchResponse | null>(null)
+  const [analysis, setAnalysis] = useState<SearchAnalysisResponse | null>(null)
+  const [analysisLoading, setAnalysisLoading] = useState(false)
+  const [searching, setSearching] = useState(false)
+  const [activeResult, setActiveResult] = useState<SearchResult | null>(null)
 
-  const hasDataset = (summary?.counts?.products ?? 0) > 0;
-  const displayedJob = jobState ?? summary?.activeIndex?.lastSuccessfulJob ?? summary?.imports?.[0] ?? null;
-  const comparisonRows =
-    previousSearchState && searchState
-      ? searchState.results.map((item: any, index: number) => {
-          const beforeIndex = previousSearchState.results.findIndex(
-            (previousItem: any) => previousItem.product.id === item.product.id,
-          );
-          return {
-            id: item.product.id,
-            title: item.product.title,
-            before: beforeIndex >= 0 ? beforeIndex + 1 : null,
-            after: index + 1,
-            delta: beforeIndex >= 0 ? beforeIndex + 1 - (index + 1) : null,
-          };
-        })
-      : [];
+  const deferredQuery = useDeferredValue(query.trim())
+  const hasDataset = (summary?.counts.products ?? 0) > 0
+  const activeFilterCount = countActiveFilters(filters)
+  const displayedJob =
+    jobState ?? summary?.activeIndex.lastSuccessfulJob ?? summary?.imports[0] ?? null
+
+  const comparisonRows = useMemo(() => {
+    if (!previousSearchState || !searchState) {
+      return []
+    }
+
+    return searchState.results.map((item, index) => {
+      const beforeIndex = previousSearchState.results.findIndex(
+        (previousItem) => previousItem.product.id === item.product.id,
+      )
+
+      return {
+        id: item.product.id,
+        title: item.product.title,
+        before: beforeIndex >= 0 ? beforeIndex + 1 : null,
+        after: index + 1,
+        delta: beforeIndex >= 0 ? beforeIndex + 1 - (index + 1) : null,
+      }
+    })
+  }, [previousSearchState, searchState])
+
+  const interpretation = searchState
+    ? {
+        correctedQuery: searchState.correctedQuery,
+        queryInterpretation: searchState.queryInterpretation,
+        appliedSynonyms: searchState.appliedSynonyms,
+        searchTermsUsed: searchState.searchTermsUsed,
+      }
+    : analysis
+      ? {
+          correctedQuery: analysis.correctedQuery,
+          queryInterpretation: analysis.queryInterpretation,
+          appliedSynonyms: analysis.appliedSynonyms,
+          searchTermsUsed: analysis.searchTermsUsed,
+        }
+      : null
 
   useEffect(() => {
-    void refreshAll();
-  }, []);
+    void refreshAll()
+  }, [])
+
+  useEffect(() => {
+    if (!deferredQuery) {
+      setAnalysis(null)
+      return
+    }
+
+    const controller = new AbortController()
+    const timeout = window.setTimeout(async () => {
+      setAnalysisLoading(true)
+      try {
+        const payload = await analyzeSearchQuery({ query: deferredQuery })
+        if (!controller.signal.aborted) {
+          setAnalysis(payload)
+        }
+      } catch {
+        if (!controller.signal.aborted) {
+          setAnalysis(null)
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setAnalysisLoading(false)
+        }
+      }
+    }, 220)
+
+    return () => {
+      controller.abort()
+      window.clearTimeout(timeout)
+    }
+  }, [deferredQuery])
 
   useEffect(() => {
     if (activeTab === 'metrics' && !metrics && !metricsLoading) {
-      void refreshMetrics();
+      void refreshMetrics()
     }
-  }, [activeTab, metrics, metricsLoading]);
+  }, [activeTab, metrics, metricsLoading])
 
   async function refreshAll() {
-    setLoadingData(true);
-    setError(null);
+    setLoadingData(true)
+    setError(null)
     try {
       const [healthResult, summaryResult, profilesResult] = await Promise.all([
         getHealth(),
         getDatasetSummary(),
         getDemoProfiles().catch(() => []),
-      ]);
-      setHealth(healthResult);
-      setSummary(summaryResult);
-      setProfiles(profilesResult);
-      setJobState((current: any) => {
+      ])
+
+      setHealth(healthResult)
+      setSummary(summaryResult)
+      setProfiles(profilesResult)
+      setJobState((current) => {
         if (current?.status === 'running' || current?.status === 'queued') {
-          return current;
+          return current
         }
-        return summaryResult?.activeIndex?.lastSuccessfulJob ?? summaryResult?.imports?.[0] ?? null;
-      });
-      if (!selectedCustomer && profilesResult.length > 0) {
-        setSelectedCustomer(profilesResult[0].customerId);
-      }
-      if (profilesResult.length === 0) {
-        setSelectedCustomer('');
-      }
+        return summaryResult.activeIndex.lastSuccessfulJob ?? summaryResult.imports[0] ?? null
+      })
+
+      const selectedStillValid = profilesResult.some(
+        (profile) => profile.customerId === selectedCustomer,
+      )
+      setSelectedCustomer(selectedStillValid ? selectedCustomer : (profilesResult[0]?.customerId ?? ''))
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить данные.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить состояние системы.')
     } finally {
-      setLoadingData(false);
+      setLoadingData(false)
     }
   }
 
   async function refreshMetrics() {
-    setMetricsLoading(true);
-    setError(null);
+    setMetricsLoading(true)
+    setError(null)
     try {
-      setMetrics(await getMetrics());
+      setMetrics(await getMetrics())
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить метрики.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить метрики.')
     } finally {
-      setMetricsLoading(false);
+      setMetricsLoading(false)
     }
   }
 
   function resetSearchState() {
-    setSearchState(null);
-    setPreviousSearchState(null);
-    setSessionId(createSessionId());
+    setSearchState(null)
+    setPreviousSearchState(null)
+    setFilters({})
+    setSessionId(createSessionId())
+    setActiveResult(null)
   }
 
   async function pollJob(jobId: string) {
-    const deadline = Date.now() + 120_000;
+    const deadline = Date.now() + 180_000
     while (Date.now() < deadline) {
-      const current = await getJob(jobId);
-      setJobState(current);
+      const current = await getJob(jobId)
+      setJobState(current)
       if (current.status === 'successful') {
-        return current;
+        return current
       }
       if (current.status === 'failed' || current.status === 'interrupted') {
-        throw new Error(current.errors?.join('; ') || 'Фоновая задача завершилась с ошибкой.');
+        throw new Error(current.errors.join('; ') || 'Фоновая задача завершилась с ошибкой.')
       }
-      await new Promise((resolve) => setTimeout(resolve, 700));
+      await new Promise((resolve) => window.setTimeout(resolve, 800))
     }
-    throw new Error('Обработка заняла слишком много времени.');
+    throw new Error('Обработка заняла слишком много времени.')
+  }
+
+  async function executeSearch(options?: {
+    capturePrevious?: boolean
+    nextCustomerId?: string
+    nextSessionId?: string
+    nextFilters?: SearchFilters
+    targetTab?: TabId
+  }) {
+    const normalizedQuery = query.trim()
+    if (!normalizedQuery) {
+      setError('Введите поисковый запрос хотя бы из одного символа.')
+      return
+    }
+
+    const customerId = options?.nextCustomerId ?? (selectedCustomer || null)
+    const currentSession = options?.nextSessionId ?? sessionId
+    const currentFilters = options?.nextFilters ?? filters
+
+    setSearching(true)
+    setError(null)
+
+    try {
+      const payload = await searchProducts({
+        query: normalizedQuery,
+        customerId,
+        sessionId: currentSession,
+        limit: 12,
+        offset: 0,
+        includeDebug,
+        filters: currentFilters,
+      })
+
+      if (options?.capturePrevious && searchState) {
+        setPreviousSearchState(searchState)
+      }
+      setSearchState(payload)
+      setActiveTab(options?.targetTab ?? 'search')
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Не удалось выполнить поиск.')
+    } finally {
+      setSearching(false)
+    }
   }
 
   async function handleUpload() {
-    setDatasetBusy(true);
-    setError(null);
+    setDatasetBusy(true)
+    setError(null)
     try {
-      const result = await uploadDatasets(mode, steFile, contractsFile);
-      await pollJob(result.jobId);
-      setMetrics(null);
-      await refreshAll();
-      setActiveTab('search');
+      const result = await uploadDatasets(mode, steFile, contractsFile)
+      await pollJob(result.jobId)
+      setMetrics(null)
+      resetSearchState()
+      await refreshAll()
+      setActiveTab('search')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось выполнить дозагрузку.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось выполнить дозагрузку.')
     } finally {
-      setDatasetBusy(false);
+      setDatasetBusy(false)
     }
   }
 
   async function handleBootstrap() {
-    setDatasetBusy(true);
-    setError(null);
+    setDatasetBusy(true)
+    setError(null)
     try {
-      const result = await bootstrapDefaultDataset();
+      const result = await bootstrapDefaultDataset()
       if (!result.jobId) {
-        throw new Error(result.message || 'Сервер не вернул идентификатор задачи.');
+        throw new Error(result.message || 'Сервер не вернул идентификатор задачи.')
       }
-      await pollJob(result.jobId);
-      setMetrics(null);
-      await refreshAll();
-      setActiveTab('search');
+      await pollJob(result.jobId)
+      setMetrics(null)
+      resetSearchState()
+      await refreshAll()
+      setActiveTab('search')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить базовый датасет.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось загрузить базовый датасет.')
     } finally {
-      setDatasetBusy(false);
+      setDatasetBusy(false)
     }
   }
 
   async function handleClear() {
-    setDatasetBusy(true);
-    setError(null);
+    if (!window.confirm('Очистить текущую базу и индекс?')) {
+      return
+    }
+
+    setDatasetBusy(true)
+    setError(null)
     try {
-      await clearDataset();
-      setJobState(null);
-      setSteFile(null);
-      setContractsFile(null);
-      setMetrics(null);
-      resetSearchState();
-      await refreshAll();
-      setActiveTab('data');
+      await clearDataset()
+      setJobState(null)
+      setSteFile(null)
+      setContractsFile(null)
+      setMetrics(null)
+      resetSearchState()
+      await refreshAll()
+      setActiveTab('data')
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось очистить базу.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось очистить базу.')
     } finally {
-      setDatasetBusy(false);
+      setDatasetBusy(false)
     }
   }
 
-  async function runSearch() {
-    const normalizedQuery = query.trim();
+  async function handleResultEvent(
+    eventType: string,
+    result: SearchResult,
+    position: number,
+    openDialog = false,
+  ) {
+    const normalizedQuery = query.trim()
     if (!normalizedQuery) {
-      setError('Введите поисковый запрос хотя бы из одного символа.');
-      return;
+      setError('Нельзя отправить событие без исходного поискового запроса.')
+      return
     }
-    setSearching(true);
-    setError(null);
-    try {
-      const payload = await searchProducts({
-        query: normalizedQuery,
-        customerId: selectedCustomer || null,
-        sessionId,
-        limit: 10,
-        offset: 0,
-        includeDebug,
-      });
-      setPreviousSearchState(searchState);
-      setSearchState(payload);
-      setActiveTab('search');
-    } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось выполнить поиск.');
-    } finally {
-      setSearching(false);
-    }
-  }
 
-  async function handleResultEvent(eventType: string, productId: string, position: number) {
-    const normalizedQuery = query.trim();
-    if (!normalizedQuery) {
-      setError('Нельзя отправить событие без исходного поискового запроса.');
-      return;
+    if (openDialog) {
+      setActiveResult(result)
     }
-    setError(null);
+
+    setError(null)
     try {
       await sendEvent({
         sessionId,
         customerId: selectedCustomer || null,
         eventType,
-        productId,
+        productId: result.product.id,
         query: normalizedQuery,
         position,
-      });
-      setPreviousSearchState(searchState);
-      const refreshed = await searchProducts({
-        query: normalizedQuery,
-        customerId: selectedCustomer || null,
-        sessionId,
-        limit: 10,
-        offset: 0,
-        includeDebug,
-      });
-      setSearchState(refreshed);
-      setActiveTab('dynamics');
+      })
+      await executeSearch({ capturePrevious: true })
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : 'Не удалось записать событие.');
+      setError(caught instanceof Error ? caught.message : 'Не удалось записать событие.')
     }
   }
 
-  const profileSummary = searchState?.profileSummary;
-  const interpretation = searchState?.queryInterpretation;
+  function handleProfileChange(nextCustomerId: string) {
+    const nextSessionId = createSessionId()
+    setSelectedCustomer(nextCustomerId)
+    setSessionId(nextSessionId)
+    setActiveResult(null)
+    if (searchState && query.trim()) {
+      void executeSearch({
+        nextCustomerId,
+        nextSessionId,
+        capturePrevious: true,
+      })
+    }
+  }
+
+  function updateFilters(nextFilters: SearchFilters) {
+    setFilters(nextFilters)
+    if (searchState && query.trim()) {
+      void executeSearch({
+        nextFilters,
+        capturePrevious: true,
+      })
+    }
+  }
+
+  function handleFilterToggle(group: keyof SearchFilters, value: string, checked: boolean) {
+    const nextFilters: SearchFilters = {
+      ...filters,
+      [group]: toggleArrayValue(filters[group], value, checked),
+    }
+    if ((nextFilters[group]?.length ?? 0) === 0) {
+      delete nextFilters[group]
+    }
+    updateFilters(nextFilters)
+  }
+
+  function clearAllFilters() {
+    updateFilters({})
+  }
+
+  const categoryFacets = searchState?.facets?.categories ?? []
+  const brandFacets = searchState?.facets?.brands ?? []
+  const attributeFacets = searchState?.facets?.attributes ?? []
+  const profileSummary = searchState?.profileSummary
+  const selectedProfile = profiles.find((profile) => profile.customerId === selectedCustomer) ?? null
 
   return (
-    <div className="app-shell">
-      <header className="hero">
-        <div className="hero-copy">
-          <Badge tone="olive">Smart Product Search</Badge>
-          <h1>Умный поиск СТЕ с понятной персонализацией</h1>
-          <p>
-            Сначала система нормализует запрос, исправляет раскладку и опечатки, учитывает
-            синонимы, затем ищет кандидатов через SQLite FTS5 и только после этого персонализирует
-            ранжирование по контрактной истории и событиям текущей сессии.
-          </p>
-        </div>
-        <div className="hero-status">
-          <div className={cx('status-pill', health?.status === 'healthy' && 'status-pill-live')}>
-            {health?.status ?? 'offline'}
+    <div className="min-h-screen bg-background text-foreground">
+      <div className="mx-auto flex min-h-screen max-w-[1600px] flex-col gap-6 px-4 py-6 sm:px-6 xl:px-8">
+        <header className="grid gap-4 lg:grid-cols-[1.4fr_1fr]">
+          <Card className="border-border/80 shadow-sm">
+            <CardHeader>
+              <div className="flex flex-wrap items-center gap-3">
+                <Badge variant="outline">Smart Product Search</Badge>
+                <Badge variant={health?.status === 'healthy' ? 'secondary' : 'destructive'}>
+                  {health?.status ?? 'offline'}
+                </Badge>
+                {loadingData ? <Badge variant="secondary">Обновляем состояние</Badge> : null}
+              </div>
+              <CardTitle className="text-2xl tracking-tight">Поиск и персонализация СТЕ</CardTitle>
+              <CardDescription>
+                Основной экран для демо: поиск, динамические фильтры, профили заказчиков и
+                живая перестройка выдачи после действий пользователя.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <CompactStat
+                label="Товаров в индексе"
+                value={formatNumber(summary?.counts.products)}
+                icon={<Database className="size-3.5" />}
+              />
+              <CompactStat
+                label="Контрактов"
+                value={formatNumber(summary?.counts.contracts)}
+                icon={<FolderSync className="size-3.5" />}
+              />
+              <CompactStat
+                label="Профилей"
+                value={formatNumber(summary?.counts.profiles)}
+                icon={<UserRound className="size-3.5" />}
+              />
+              <CompactStat
+                label="Версия backend"
+                value={health?.version ?? 'n/a'}
+                icon={<BadgeCheck className="size-3.5" />}
+              />
+            </CardContent>
+          </Card>
+
+          <Card className="border-border/80 shadow-sm">
+            <CardHeader>
+              <CardTitle>Текущий контекст</CardTitle>
+              <CardDescription>
+                Поиск идет по FTS5, затем ранжирование меняется историей контрактов и событиями
+                текущей сессии.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-xl border bg-muted/40 p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Текущая сессия
+                </div>
+                <div className="mt-2 font-medium">{sessionId}</div>
+              </div>
+              <div className="rounded-xl border bg-muted/40 p-4">
+                <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                  Выбранный профиль
+                </div>
+                <div className="mt-2 text-sm font-medium">
+                  {selectedProfile?.summary.customerName ?? 'Профиль не выбран'}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {selectedProfile?.customerId ?? 'Без customerId'}
+                </div>
+              </div>
+              <div className="rounded-xl border bg-muted/40 p-4 text-sm text-muted-foreground">
+                {searchState
+                  ? `Последний поиск: ${searchState.totalCount} результатов, API ${searchState.timingsMs.total} ms`
+                  : 'Пока нет активного поискового ответа. Выполни запрос или переключи профиль после поиска.'}
+              </div>
+            </CardContent>
+          </Card>
+        </header>
+
+        {error ? (
+          <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+            {error}
           </div>
-          <div>
-            <strong>Backend {health?.version ?? 'n/a'}</strong>
-            <p>{loadingData ? 'Обновляем состояние системы…' : 'Готов к демонстрации'}</p>
-          </div>
-        </div>
-      </header>
+        ) : null}
 
-      <div className="workspace">
-        <aside className="sidebar">
-          <Card title="Сводка" description="Текущее состояние индекса и профилей.">
-            <div className="stats-grid">
-              <StatTile label="Товары" value={formatNumber(summary?.counts?.products)} />
-              <StatTile label="Контракты" value={formatNumber(summary?.counts?.contracts)} />
-              <StatTile label="Профили" value={formatNumber(summary?.counts?.profiles)} />
-              <StatTile label="Demo-профили" value={formatNumber(summary?.counts?.demoProfiles)} />
-            </div>
-          </Card>
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as TabId)}>
+          <TabsList variant="line" className="w-full justify-start overflow-x-auto">
+            <TabsTrigger value="search">Поиск</TabsTrigger>
+            <TabsTrigger value="dynamics">Динамика</TabsTrigger>
+            <TabsTrigger value="metrics">Метрики</TabsTrigger>
+            <TabsTrigger value="data">Данные</TabsTrigger>
+          </TabsList>
 
-          <Card
-            title="Demo-заказчики"
-            description="Профили выбираются автоматически по объему и разнообразию закупок."
-          >
-            <div className="profile-list">
-              {profiles.length === 0 ? (
-                <p className="muted">Профили появятся после загрузки данных.</p>
-              ) : (
-                profiles.map((profile) => (
-                  <button
-                    key={profile.customerId}
-                    className={cx(
-                      'profile-button',
-                      selectedCustomer === profile.customerId && 'profile-button-active',
-                    )}
-                    onClick={() => setSelectedCustomer(profile.customerId)}
-                    type="button"
-                  >
-                    <strong>{profile.label}</strong>
-                    <span>{profile.summary.customerName}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          </Card>
-
-          <Card title="Как используется ИИ" description="Без внешних API и с безопасным fallback.">
-            <div className="explain-list">
-              <div>
-                <strong>В hot path ИИ не обязателен.</strong>
-                <p>Поиск работает на нормализации, словарях, FTS5 и прозрачном rerank.</p>
-              </div>
-              <div>
-                <strong>Локальная LLM опциональна.</strong>
-                <p>Ее можно включить как локальный парсер для неоднозначных запросов, не ломая API.</p>
-              </div>
-              <div>
-                <strong>Объяснение строится детерминированно.</strong>
-                <p>Пользователь видит не “магический ответ”, а реальные факторы ранжирования.</p>
-              </div>
-            </div>
-          </Card>
-        </aside>
-
-        <main className="main-area">
-          <nav className="tabs">
-            {tabs.map((tab) => (
-              <button
-                key={tab.id}
-                className={cx('tab', activeTab === tab.id && 'tab-active')}
-                onClick={() => setActiveTab(tab.id)}
-                type="button"
-              >
-                {tab.label}
-              </button>
-            ))}
-            <div className="tabs-spacer" />
-            <Button variant="ghost" onClick={() => void refreshAll()}>
-              Обновить
-            </Button>
-          </nav>
-
-          {error ? <div className="error-banner">{error}</div> : null}
-
-          {activeTab === 'search' ? (
-            <>
-              <Card
-                title="Поиск"
-                description="Показывает, какие именно преобразования запроса использовались при ранжировании."
-                action={
-                  <div className="session-box">
-                    <span>Session</span>
-                    <strong>{sessionId}</strong>
+          <TabsContent value="search" className="space-y-6">
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle>Поисковый запрос</CardTitle>
+                <CardDescription>
+                  Здесь система сразу показывает раскладку, исправления опечаток, синонимы и
+                  фактические токены, которыми ищет в индексе.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_280px_180px]">
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Запрос</label>
+                    <div className="relative">
+                      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        value={query}
+                        onChange={(event) => setQuery(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') {
+                            event.preventDefault()
+                            void executeSearch({ targetTab: 'search' })
+                          }
+                        }}
+                        placeholder="Например: aktirf smartbuy 16"
+                        className="h-11 pl-9"
+                      />
+                    </div>
                   </div>
-                }
-              >
-                {!hasDataset ? (
-                  <EmptyState
-                    title="Индекс пока пустой"
-                    description="Сначала загрузите базовый датасет или выполните дозагрузку на экране данных."
-                    action={<Button onClick={() => setActiveTab('data')}>Открыть экран данных</Button>}
-                  />
-                ) : (
-                  <>
-                    <div className="search-grid">
-                      <label className="field field-wide">
-                        <span>Запрос</span>
-                        <input
-                          onChange={(event) => setQuery(event.target.value)}
-                          placeholder="Например: aktirf smartbuy 16"
-                          value={query}
-                        />
-                      </label>
 
-                      <label className="field">
-                        <span>Заказчик</span>
-                        <select
-                          onChange={(event) => setSelectedCustomer(event.target.value)}
-                          value={selectedCustomer}
-                        >
-                          <option value="">Без персонализации</option>
-                          {profiles.map((profile) => (
-                            <option key={profile.customerId} value={profile.customerId}>
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Профиль заказчика</label>
+                    <Select value={selectedCustomer} onValueChange={handleProfileChange}>
+                      <SelectTrigger className="h-11 w-full">
+                        <SelectValue placeholder="Выберите профиль" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {profiles.length === 0 ? (
+                          <SelectItem value="__empty" disabled>
+                            Нет профилей
+                          </SelectItem>
+                        ) : (
+                          profiles.map((profile) => (
+                            <SelectItem key={profile.customerId} value={profile.customerId}>
                               {profile.label}
-                            </option>
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div className="flex flex-col justify-end gap-2">
+                    <Button
+                      className="h-11"
+                      disabled={!hasDataset || searching || query.trim().length === 0}
+                      onClick={() => void executeSearch({ targetTab: 'search' })}
+                    >
+                      {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
+                      Искать
+                    </Button>
+                    <Button
+                      variant="outline"
+                      className="h-11"
+                      onClick={() => {
+                        const nextSessionId = createSessionId()
+                        setSessionId(nextSessionId)
+                        if (searchState && query.trim()) {
+                          void executeSearch({
+                            nextSessionId,
+                            capturePrevious: true,
+                          })
+                        }
+                      }}
+                    >
+                      <RefreshCcw className="size-4" />
+                      Новая сессия
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-3">
+                  <label className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Checkbox
+                      checked={includeDebug}
+                      onCheckedChange={(value) => setIncludeDebug(Boolean(value))}
+                    />
+                    Показывать факторы ранжирования
+                  </label>
+                  {analysisLoading ? (
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Loader2 className="size-4 animate-spin" />
+                      Разбираем запрос
+                    </div>
+                  ) : null}
+                </div>
+
+                {interpretation ? (
+                  <div className="grid gap-3 lg:grid-cols-[1.1fr_1fr]">
+                    <div className="rounded-xl border bg-muted/30 p-4">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Исправление запроса
+                      </div>
+                      <div className="mt-2 text-sm text-muted-foreground">Оригинал</div>
+                      <div className="mt-1 font-medium">{query.trim() || '—'}</div>
+                      <div className="mt-3 text-sm text-muted-foreground">Будем искать как</div>
+                      <div className="mt-1 text-lg font-semibold">
+                        {interpretation.correctedQuery || '—'}
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {interpretation.queryInterpretation.layoutCorrections.map((entry, index) => (
+                          <Badge key={`layout-${index}`} variant="outline">
+                            {asText(entry.from)} → {asText(entry.to)}
+                          </Badge>
+                        ))}
+                        {interpretation.queryInterpretation.typoCorrections.map((entry, index) => (
+                          <Badge key={`typo-${index}`} variant="outline">
+                            {asText(entry.from)} → {asText(entry.to)}
+                          </Badge>
+                        ))}
+                        {interpretation.queryInterpretation.synonymMappings.map((entry, index) => (
+                          <Badge key={`synonym-${index}`} variant="secondary">
+                            {asText(entry.from)} → {asText(entry.to)}
+                          </Badge>
+                        ))}
+                        {interpretation.queryInterpretation.layoutCorrections.length === 0 &&
+                        interpretation.queryInterpretation.typoCorrections.length === 0 &&
+                        interpretation.queryInterpretation.synonymMappings.length === 0 ? (
+                          <span className="text-sm text-muted-foreground">
+                            Дополнительных исправлений не потребовалось.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    <div className="rounded-xl border bg-muted/30 p-4">
+                      <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                        Что реально использовано при поиске
+                      </div>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {interpretation.searchTermsUsed.map((term) => (
+                          <Badge key={term}>{term}</Badge>
+                        ))}
+                        {interpretation.searchTermsUsed.length === 0 ? (
+                          <span className="text-sm text-muted-foreground">Токены еще не готовы.</span>
+                        ) : null}
+                      </div>
+                      <Separator className="my-4" />
+                      <div className="text-sm text-muted-foreground">Синонимы</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {interpretation.appliedSynonyms.map((value) => (
+                          <Badge key={value} variant="secondary">
+                            {value}
+                          </Badge>
+                        ))}
+                        {interpretation.appliedSynonyms.length === 0 ? (
+                          <span className="text-sm text-muted-foreground">
+                            Синонимы в этом запросе не понадобились.
+                          </span>
+                        ) : null}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+
+            {!hasDataset ? (
+              <Card className="border-border/80 shadow-sm">
+                <CardContent className="py-10">
+                  <div className="mx-auto max-w-xl text-center">
+                    <div className="text-lg font-semibold">Индекс пока пустой</div>
+                    <p className="mt-2 text-sm text-muted-foreground">
+                      Сначала загрузи встроенный датасет или дозагрузи свои CSV на вкладке
+                      «Данные».
+                    </p>
+                    <div className="mt-4">
+                      <Button variant="outline" onClick={() => setActiveTab('data')}>
+                        <Database className="size-4" />
+                        Перейти к данным
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            ) : (
+              <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
+                <div className="space-y-6">
+                  <Card className="border-border/80 shadow-sm">
+                    <CardHeader>
+                      <CardTitle className="flex items-center gap-2">
+                        <Filter className="size-4" />
+                        Динамические фильтры
+                      </CardTitle>
+                      <CardDescription>
+                        Пересчитываются по текущей выдаче и сразу влияют на следующий запрос.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <Badge variant="outline">{activeFilterCount} активных</Badge>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={activeFilterCount === 0}
+                          onClick={clearAllFilters}
+                        >
+                          Сбросить
+                        </Button>
+                      </div>
+
+                      <ScrollArea className="h-[560px] pr-3">
+                        <div className="space-y-5">
+                          <div className="space-y-2">
+                            <div className="text-sm font-medium">Категории</div>
+                            {categoryFacets.length === 0 ? (
+                              <div className="text-sm text-muted-foreground">Нет данных</div>
+                            ) : (
+                              categoryFacets.map((bucket) => (
+                                <FilterBucket
+                                  key={`category-${bucket.value}`}
+                                  bucket={bucket}
+                                  checked={(filters.categories ?? []).includes(bucket.value)}
+                                  onChange={(checked) =>
+                                    handleFilterToggle('categories', bucket.value, checked)
+                                  }
+                                />
+                              ))
+                            )}
+                          </div>
+
+                          <Separator />
+
+                          <div className="space-y-2">
+                            <div className="text-sm font-medium">Бренды</div>
+                            {brandFacets.length === 0 ? (
+                              <div className="text-sm text-muted-foreground">Нет данных</div>
+                            ) : (
+                              brandFacets.map((bucket) => (
+                                <FilterBucket
+                                  key={`brand-${bucket.value}`}
+                                  bucket={bucket}
+                                  checked={(filters.brands ?? []).includes(bucket.value)}
+                                  onChange={(checked) =>
+                                    handleFilterToggle('brands', bucket.value, checked)
+                                  }
+                                />
+                              ))
+                            )}
+                          </div>
+
+                          {attributeFacets.map((group: SearchFacetGroup) => (
+                            <div key={group.name} className="space-y-2">
+                              <Separator />
+                              <div className="text-sm font-medium">{group.name}</div>
+                              {group.values.map((bucket) => (
+                                <FilterBucket
+                                  key={bucket.key ?? `${group.name}-${bucket.value}`}
+                                  bucket={bucket}
+                                  checked={(filters.attributes ?? []).includes(
+                                    bucket.key ?? `${group.name}::${bucket.value}`,
+                                  )}
+                                  onChange={(checked) =>
+                                    handleFilterToggle(
+                                      'attributes',
+                                      bucket.key ?? `${group.name}::${bucket.value}`,
+                                      checked,
+                                    )
+                                  }
+                                />
+                              ))}
+                            </div>
                           ))}
-                        </select>
-                      </label>
-
-                      <label className="checkbox-field">
-                        <input
-                          checked={includeDebug}
-                          onChange={(event) => setIncludeDebug(event.target.checked)}
-                          type="checkbox"
-                        />
-                        <span>Показывать debug-факторы</span>
-                      </label>
-                    </div>
-
-                    <div className="inline-actions">
-                      <Button disabled={searching} onClick={() => void runSearch()}>
-                        {searching ? 'Ищем…' : 'Запустить поиск'}
-                      </Button>
-                      <Button onClick={() => setSessionId(createSessionId())} variant="secondary">
-                        Новая сессия
-                      </Button>
-                    </div>
-
-                    {searchState ? (
-                      <>
-                        <div className="insight-grid">
-                          <div className="insight-card">
-                            <span className="insight-label">Нормализованный запрос</span>
-                            <strong>{searchState.normalizedQuery || '—'}</strong>
-                          </div>
-                          <div className="insight-card">
-                            <span className="insight-label">Исправленный запрос</span>
-                            <strong>{searchState.correctedQuery || '—'}</strong>
-                          </div>
-                          <div className="insight-card">
-                            <span className="insight-label">Кандидатов после ранжирования</span>
-                            <strong>{formatNumber(searchState.totalCount)}</strong>
-                          </div>
                         </div>
+                      </ScrollArea>
+                    </CardContent>
+                  </Card>
 
-                        <div className="stack">
+                  <Card className="border-border/80 shadow-sm">
+                    <CardHeader>
+                      <CardTitle>Профиль заказчика</CardTitle>
+                      <CardDescription>
+                        Меняется сразу при переключении профиля и влияет на ранжирование без
+                        перезапуска сервера.
+                      </CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                      {profileSummary ? (
+                        <>
+                          <div className="rounded-xl border bg-muted/30 p-4">
+                            <div className="font-medium">{profileSummary.customerName}</div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                              {profileSummary.customerId}
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3 text-sm">
+                            <div className="rounded-xl border px-3 py-3">
+                              <div className="text-xs text-muted-foreground">Закупок</div>
+                              <div className="mt-1 font-semibold">
+                                {formatNumber(profileSummary.purchaseCount)}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border px-3 py-3">
+                              <div className="text-xs text-muted-foreground">Совпало с профилем</div>
+                              <div className="mt-1 font-semibold">
+                                {formatNumber(profileSummary.matchedPurchaseCount)}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border px-3 py-3">
+                              <div className="text-xs text-muted-foreground">Сумма контрактов</div>
+                              <div className="mt-1 font-semibold">
+                                {formatMoney(profileSummary.totalSpend)}
+                              </div>
+                            </div>
+                            <div className="rounded-xl border px-3 py-3">
+                              <div className="text-xs text-muted-foreground">Последняя закупка</div>
+                              <div className="mt-1 font-semibold">
+                                {profileSummary.lastPurchaseAt ?? '—'}
+                              </div>
+                            </div>
+                          </div>
                           <div>
-                            <h4>Что использовалось в поиске</h4>
-                            <div className="badge-row">
-                              {searchState.searchTermsUsed?.map((term: string) => (
-                                <Badge key={term}>{term}</Badge>
+                            <div className="mb-2 text-sm font-medium">Топ категорий</div>
+                            <div className="flex flex-wrap gap-2">
+                              {profileSummary.topCategories.slice(0, 6).map((item) => (
+                                <Badge key={`category-${item.value}`} variant="secondary">
+                                  {item.value}
+                                </Badge>
                               ))}
                             </div>
                           </div>
-
-                          {interpretation ? (
-                            <div className="interpretation-grid">
-                              <div>
-                                <h4>Исправления раскладки</h4>
-                                {interpretation.layoutCorrections.length === 0 ? (
-                                  <p className="muted">Не использовались.</p>
-                                ) : (
-                                  interpretation.layoutCorrections.map((item: any) => (
-                                    <div className="mini-row" key={`${item.from}-${item.to}`}>
-                                      <Badge tone="soft">{item.keyboard}</Badge>
-                                      <span>
-                                        {item.from} → {item.to}
-                                      </span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-
-                              <div>
-                                <h4>Исправления опечаток</h4>
-                                {interpretation.typoCorrections.length === 0 ? (
-                                  <p className="muted">Не использовались.</p>
-                                ) : (
-                                  interpretation.typoCorrections.map((item: any) => (
-                                    <div className="mini-row" key={`${item.from}-${item.to}`}>
-                                      <Badge tone="soft">score {item.score}</Badge>
-                                      <span>
-                                        {item.from} → {item.to}
-                                      </span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-
-                              <div>
-                                <h4>Синонимы</h4>
-                                {interpretation.synonymMappings.length === 0 ? (
-                                  <p className="muted">Не использовались.</p>
-                                ) : (
-                                  interpretation.synonymMappings.map((item: any) => (
-                                    <div className="mini-row" key={`${item.from}-${item.to}`}>
-                                      <Badge tone="olive">synonym</Badge>
-                                      <span>
-                                        {item.from} → {item.to}
-                                      </span>
-                                    </div>
-                                  ))
-                                )}
-                              </div>
-                            </div>
-                          ) : null}
-
-                          {profileSummary ? (
-                            <Card
-                              title="Профиль заказчика"
-                              description="Эти агрегаты строятся автоматически из контрактной истории."
-                              className="subcard"
-                            >
-                              <div className="stats-grid">
-                                <StatTile label="Заказчик" value={profileSummary.customerName} />
-                                <StatTile
-                                  label="Закупок"
-                                  value={formatNumber(profileSummary.purchaseCount)}
-                                  hint={`matched: ${formatNumber(profileSummary.matchedPurchaseCount)}`}
-                                />
-                                <StatTile
-                                  label="Общий объем"
-                                  value={formatNumber(Math.round(profileSummary.totalSpend))}
-                                />
-                                <StatTile
-                                  label="Последняя закупка"
-                                  value={profileSummary.lastPurchaseAt ?? '—'}
-                                />
-                              </div>
-                            </Card>
-                          ) : null}
+                        </>
+                      ) : (
+                        <div className="text-sm text-muted-foreground">
+                          После поиска здесь появится краткий профиль выбранного заказчика.
                         </div>
-                      </>
-                    ) : null}
-                  </>
-                )}
-              </Card>
-
-              <Card
-                title="Результаты"
-                description="Каждая карточка показывает объяснение ранжирования и live-действия."
-              >
-                {!searchState ? (
-                  <EmptyState
-                    title="Поиск еще не запускался"
-                    description="Введите запрос, выберите профиль заказчика и нажмите «Запустить поиск»."
-                  />
-                ) : searchState.results.length === 0 ? (
-                  <EmptyState
-                    title="По этому запросу ничего не найдено"
-                    description="Проверьте запрос или загрузите данные на экране управления датасетом."
-                  />
-                ) : (
-                  <div className="result-list">
-                    {searchState.results.map((item: any, index: number) => (
-                      <article className="result-card" key={`${item.product.id}-${index}`}>
-                        <div className="result-header">
-                          <div>
-                            <h4>{item.product.title}</h4>
-                            <p>{item.product.category}</p>
-                          </div>
-                          <div className="result-score">
-                            <span>Score</span>
-                            <strong>{item.score.toFixed(3)}</strong>
-                          </div>
-                        </div>
-
-                        <p className="result-explanation">{item.explanation}</p>
-
-                        <div className="badge-row">
-                          {item.product.brandGuess ? <Badge>{item.product.brandGuess}</Badge> : null}
-                          {item.product.modelGuess ? <Badge>{item.product.modelGuess}</Badge> : null}
-                          {item.product.attributes?.slice(0, 3).map((attribute: any) => (
-                            <Badge key={`${item.product.id}-${attribute.name}-${attribute.value}`} tone="soft">
-                              {attribute.name}: {attribute.value}
-                            </Badge>
-                          ))}
-                        </div>
-
-                        {includeDebug && item.scoreBreakdown ? (
-                          <div className="factor-list">
-                            {item.scoreBreakdown.map((factor: any) => (
-                              <div className="factor-row" key={`${item.product.id}-${factor.type}-${factor.reason}`}>
-                                <Badge tone={factor.value < 0 ? 'danger' : 'soft'}>
-                                  {factor.type}: {factor.value > 0 ? '+' : ''}
-                                  {factor.value.toFixed(2)}
-                                </Badge>
-                                <span>{factor.reason}</span>
-                              </div>
-                            ))}
-                          </div>
-                        ) : null}
-
-                        <div className="inline-actions">
-                          <Button
-                            onClick={() => void handleResultEvent('result_opened', item.product.id, index + 1)}
-                            variant="secondary"
-                          >
-                            Открыл карточку
-                          </Button>
-                          <Button
-                            onClick={() => void handleResultEvent('result_bounced', item.product.id, index + 1)}
-                            variant="ghost"
-                          >
-                            Быстрый возврат
-                          </Button>
-                          <Button
-                            onClick={() => void handleResultEvent('result_saved', item.product.id, index + 1)}
-                            variant="secondary"
-                          >
-                            Сохранить
-                          </Button>
-                          <Button
-                            onClick={() => void handleResultEvent('marked_relevant', item.product.id, index + 1)}
-                            variant="primary"
-                          >
-                            Релевантно
-                          </Button>
-                          <Button
-                            onClick={() => void handleResultEvent('marked_irrelevant', item.product.id, index + 1)}
-                            variant="danger"
-                          >
-                            Не релевантно
-                          </Button>
-                        </div>
-                      </article>
-                    ))}
-                  </div>
-                )}
-              </Card>
-            </>
-          ) : null}
-
-          {activeTab === 'data' ? (
-            <>
-              <Card
-                title="Быстрый старт"
-                description="Для защиты удобно один раз заранее прогреть полный индекс из встроенной папки data."
-              >
-                <div className="inline-actions">
-                  <Button disabled={datasetBusy} onClick={() => void handleBootstrap()}>
-                    {datasetBusy ? 'Обрабатываем…' : 'Загрузить встроенный датасет'}
-                  </Button>
-                  <Badge tone="soft">replace_all</Badge>
+                      )}
+                    </CardContent>
+                  </Card>
                 </div>
-              </Card>
 
-              <div className="two-column-grid">
-                <Card
-                  title="Дозагрузка"
-                  description="Частичный импорт без обязательного полного пересоздания индекса."
-                >
-                  <div className="form-grid">
-                    <label className="field">
-                      <span>Режим</span>
-                      <select onChange={(event) => setMode(event.target.value as UploadMode)} value={mode}>
-                        {incrementalModes.map((item) => (
-                          <option key={item.value} value={item.value}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <label className="field">
-                      <span>Файл СТЕ</span>
-                      <input onChange={(event) => setSteFile(event.target.files?.[0] ?? null)} type="file" />
-                    </label>
-
-                    <label className="field">
-                      <span>Файл контрактов</span>
-                      <input
-                        onChange={(event) => setContractsFile(event.target.files?.[0] ?? null)}
-                        type="file"
-                      />
-                    </label>
-                  </div>
-
-                  <div className="inline-actions">
-                    <Button disabled={datasetBusy} onClick={() => void handleUpload()}>
-                      Запустить дозагрузку
-                    </Button>
-                    <Badge tone="soft">{mode}</Badge>
-                  </div>
-                </Card>
-
-                <Card
-                  title="Очистка БД"
-                  description="Удаляет текущий индекс, профили, события и историю импортов."
-                >
-                  <div className="stack">
-                    <p className="muted">
-                      Полезно перед повторной демонстрацией или когда нужно гарантированно показать
-                      чистый сценарий.
-                    </p>
-                    <div className="inline-actions">
-                      <Button disabled={datasetBusy} onClick={() => void handleClear()} variant="danger">
-                        Очистить текущую БД
-                      </Button>
+                <div className="space-y-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="text-lg font-semibold">Выдача</div>
+                      <div className="text-sm text-muted-foreground">
+                        {searchState
+                          ? `${formatNumber(searchState.totalCount)} результатов, показано ${searchState.results.length}`
+                          : 'Сначала выполни поиск.'}
+                      </div>
                     </div>
+                    {searchState ? (
+                      <div className="flex flex-wrap gap-2">
+                        <Badge variant="outline">Normalize {searchState.timingsMs.normalize} ms</Badge>
+                        <Badge variant="outline">Retrieve {searchState.timingsMs.retrieve} ms</Badge>
+                        <Badge variant="outline">Rerank {searchState.timingsMs.rerank} ms</Badge>
+                        <Badge>Total {searchState.timingsMs.total} ms</Badge>
+                      </div>
+                    ) : null}
                   </div>
-                </Card>
+
+                  {searching && !searchState ? (
+                    <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                      {Array.from({ length: 6 }).map((_, index) => (
+                        <Card key={`skeleton-${index}`} className="border-border/80 shadow-sm">
+                          <CardHeader>
+                            <Skeleton className="h-4 w-32" />
+                            <Skeleton className="h-8 w-full" />
+                          </CardHeader>
+                          <CardContent className="space-y-2">
+                            <Skeleton className="h-4 w-full" />
+                            <Skeleton className="h-4 w-5/6" />
+                            <Skeleton className="h-20 w-full" />
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {searchState && searchState.results.length > 0 ? (
+                    <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+                      {searchState.results.map((result, index) => (
+                        <SearchResultCard
+                          key={result.product.id}
+                          result={result}
+                          position={index + 1}
+                          onOpen={() => void handleResultEvent('result_opened', result, index + 1, true)}
+                          onRelevant={() => void handleResultEvent('marked_relevant', result, index + 1)}
+                          onIrrelevant={() => void handleResultEvent('marked_irrelevant', result, index + 1)}
+                          onBounce={() => void handleResultEvent('result_bounced', result, index + 1)}
+                          onSave={() => void handleResultEvent('result_saved', result, index + 1)}
+                          onDetails={() => setActiveResult(result)}
+                        />
+                      ))}
+                    </div>
+                  ) : null}
+
+                  {searchState && searchState.results.length === 0 ? (
+                    <Card className="border-border/80 shadow-sm">
+                      <CardContent className="py-12 text-center">
+                        <div className="text-lg font-semibold">Ничего не найдено</div>
+                        <p className="mt-2 text-sm text-muted-foreground">
+                          Попробуй убрать часть фильтров или изменить запрос.
+                        </p>
+                      </CardContent>
+                    </Card>
+                  ) : null}
+                </div>
               </div>
+            )}
+          </TabsContent>
 
-              <Card title="Последняя задача импорта" description="Статус и предупреждения по текущей обработке.">
-                {displayedJob ? (
-                  <div className="stack">
-                    <div className="job-headline">
-                      <div>
-                        <strong>{displayedJob.status}</strong>
-                        <p>{displayedJob.mode}</p>
-                      </div>
-                      <Badge tone="soft">{Math.round((displayedJob.progress ?? 0) * 100)}%</Badge>
-                    </div>
-                    <div className="progress-shell">
-                      <div
-                        className="progress-fill"
-                        style={{ width: `${(displayedJob.progress ?? 0) * 100}%` }}
-                      />
-                    </div>
-                    {displayedJob.warnings?.length ? (
-                      <div className="warning-box">
-                        {displayedJob.warnings.slice(0, 8).map((warning: string) => (
-                          <p key={warning}>{warning}</p>
-                        ))}
-                      </div>
-                    ) : null}
-                    {displayedJob.stats ? (
-                      <div className="stats-grid">
-                        {Object.entries(displayedJob.stats).map(([key, value]) => (
-                          <StatTile key={key} label={key} value={String(value)} />
-                        ))}
-                      </div>
-                    ) : null}
+          <TabsContent value="dynamics" className="space-y-6">
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle>Как меняется выдача</CardTitle>
+                <CardDescription>
+                  Здесь видно, как ранжирование перестраивается после действий пользователя в той
+                  же сессии.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {comparisonRows.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">
+                    Сначала выполни поиск, затем отметь карточку как релевантную, нерелевантную
+                    или сделай быстрый возврат.
                   </div>
                 ) : (
-                  <p className="muted">Импорт еще не запускался в этой сессии.</p>
-                )}
-              </Card>
-
-              <Card title="История импортов" description="Последние операции по текущему индексу.">
-                {summary?.imports?.length ? (
-                  <div className="history-list">
-                    {summary.imports.map((item: any) => (
-                      <div className="history-row" key={item.jobId}>
-                        <div>
-                          <strong>{item.mode}</strong>
-                          <p>{item.finishedAt ?? item.createdAt}</p>
-                        </div>
-                        <Badge tone={item.status === 'successful' ? 'olive' : 'soft'}>{item.status}</Badge>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted">История импортов пока пуста.</p>
-                )}
-              </Card>
-            </>
-          ) : null}
-
-          {activeTab === 'dynamics' ? (
-            <>
-              <Card
-                title="Динамика выдачи"
-                description="Сравнение позиций до и после действия пользователя в текущей сессии."
-              >
-                {!previousSearchState || !searchState ? (
-                  <EmptyState
-                    title="Еще нет сравнения"
-                    description="Сначала выполните поиск, затем нажмите на одном из результатов «Релевантно», «Не релевантно», «Открыл карточку» или «Быстрый возврат»."
-                  />
-                ) : (
-                  <div className="comparison-list">
-                    {comparisonRows.map((row: any) => (
-                      <div className="comparison-row" key={row.id}>
-                        <div>
-                          <strong>{row.title}</strong>
-                          <p>ID: {row.id}</p>
-                        </div>
-                        <div className="comparison-metrics">
-                          <Badge tone="soft">до: {row.before ?? 'new'}</Badge>
-                          <Badge tone="soft">после: {row.after}</Badge>
-                          <Badge tone={row.delta == null ? 'default' : row.delta > 0 ? 'olive' : 'danger'}>
-                            {row.delta == null ? 'новый' : row.delta > 0 ? `↑ ${row.delta}` : `↓ ${Math.abs(row.delta)}`}
-                          </Badge>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </Card>
-
-              <Card
-                title="Как пересчитываются предпочтения в реальном времени"
-                description="Короткое объяснение механики live-персонализации."
-              >
-                <div className="explain-list">
-                  <div>
-                    <strong>Долгоживущий профиль</strong>
-                    <p>Строится из контрактов: категории, СТЕ и токены получают свои веса.</p>
-                  </div>
-                  <div>
-                    <strong>Сигналы сессии</strong>
-                    <p>
-                      `result_opened`, `result_saved`, `marked_relevant`, `marked_irrelevant` и
-                      `result_bounced` сразу пишутся в таблицу событий.
-                    </p>
-                  </div>
-                  <div>
-                    <strong>Следующий запрос уже другой</strong>
-                    <p>
-                      При повторном поиске к базовому score добавляются session product/category
-                      boosts или penalties, поэтому порядок выдачи меняется мгновенно.
-                    </p>
-                  </div>
-                </div>
-              </Card>
-            </>
-          ) : null}
-
-          {activeTab === 'metrics' ? (
-            <>
-              <Card
-                title="Оценка качества"
-                description="Сравнение baseline-поиска и персонализированной версии на implicit relevance из контрактов."
-                action={
-                  <Button disabled={metricsLoading} onClick={() => void refreshMetrics()} variant="secondary">
-                    {metricsLoading ? 'Считаем…' : 'Пересчитать'}
-                  </Button>
-                }
-              >
-                {metricsLoading ? (
-                  <p className="muted">Считаем метрики на текущем индексе…</p>
-                ) : metrics ? (
-                  <>
-                    <div className="stats-grid">
-                      <StatTile label="Товары" value={formatNumber(metrics.dataset.products)} />
-                      <StatTile label="Контракты" value={formatNumber(metrics.dataset.contracts)} />
-                      <StatTile label="Профили" value={formatNumber(metrics.dataset.profiles)} />
-                      <StatTile
-                        label="Оценочных запросов"
-                        value={formatNumber(metrics.dataset.evaluationQueries)}
-                      />
-                    </div>
-
-                    <div className="metric-table">
-                      {(['ndcg10', 'mrr10', 'recall20', 'success5'] as const).map((metricName) => {
-                        const baselineValue = metrics.baseline[metricName];
-                        const personalizedValue = metrics.personalized[metricName];
-                        const delta = personalizedValue - baselineValue;
-                        return (
-                          <div className="metric-row" key={metricName}>
-                            <div>
-                              <strong>{metricName}</strong>
-                              <p>
-                                baseline {formatMetric(baselineValue)} → personalized{' '}
-                                {formatMetric(personalizedValue)}
-                              </p>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                    {comparisonRows.map((row) => (
+                      <div key={row.id} className="rounded-xl border bg-card p-4">
+                        <div className="text-sm font-medium text-balance">{row.title}</div>
+                        <div className="mt-3 grid grid-cols-3 gap-2 text-center text-sm">
+                          <div className="rounded-lg border bg-muted/30 px-2 py-2">
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Было
                             </div>
-                            <div className="metric-bars">
-                              <div className="metric-track">
-                                <div
-                                  className="metric-fill metric-fill-baseline"
-                                  style={{ width: `${Math.max(4, baselineValue * 100)}%` }}
-                                />
-                              </div>
-                              <div className="metric-track">
-                                <div
-                                  className="metric-fill metric-fill-personalized"
-                                  style={{ width: `${Math.max(4, personalizedValue * 100)}%` }}
-                                />
-                              </div>
-                            </div>
-                            <Badge tone={delta >= 0 ? 'olive' : 'danger'}>
-                              {delta >= 0 ? '+' : ''}
-                              {delta.toFixed(4)}
-                            </Badge>
+                            <div className="mt-1 font-semibold">{row.before ?? 'new'}</div>
                           </div>
-                        );
-                      })}
+                          <div className="rounded-lg border bg-muted/30 px-2 py-2">
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Стало
+                            </div>
+                            <div className="mt-1 font-semibold">{row.after}</div>
+                          </div>
+                          <div className="rounded-lg border bg-muted/30 px-2 py-2">
+                            <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                              Δ
+                            </div>
+                            <div className="mt-1 flex items-center justify-center gap-1 font-semibold">
+                              {row.delta == null ? (
+                                'new'
+                              ) : row.delta > 0 ? (
+                                <>
+                                  <ArrowUpRight className="size-4 text-emerald-600" />
+                                  {row.delta}
+                                </>
+                              ) : row.delta < 0 ? (
+                                <>
+                                  <ArrowDownRight className="size-4 text-destructive" />
+                                  {Math.abs(row.delta)}
+                                </>
+                              ) : (
+                                '0'
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="metrics" className="space-y-6">
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle>Метрики качества</CardTitle>
+                <CardDescription>
+                  Сравнение базового поиска и персонализированной выдачи на тех же данных.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {metricsLoading ? (
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    {Array.from({ length: 4 }).map((_, index) => (
+                      <Card key={`metric-skeleton-${index}`} size="sm">
+                        <CardHeader>
+                          <Skeleton className="h-4 w-24" />
+                        </CardHeader>
+                        <CardContent className="space-y-2">
+                          <Skeleton className="h-5 w-20" />
+                          <Skeleton className="h-2 w-full" />
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                ) : metrics ? (
+                  <div className="space-y-6">
+                    <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                      <MetricDeltaCard
+                        label="NDCG@10"
+                        baseline={metrics.baseline.ndcgAt10}
+                        personalized={metrics.personalized.ndcgAt10}
+                      />
+                      <MetricDeltaCard
+                        label="MRR@10"
+                        baseline={metrics.baseline.mrrAt10}
+                        personalized={metrics.personalized.mrrAt10}
+                      />
+                      <MetricDeltaCard
+                        label="Recall@20"
+                        baseline={metrics.baseline.recallAt20}
+                        personalized={metrics.personalized.recallAt20}
+                      />
+                      <MetricDeltaCard
+                        label="Success@5"
+                        baseline={metrics.baseline.successAt5}
+                        personalized={metrics.personalized.successAt5}
+                      />
                     </div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <CompactStat label="Товаров" value={formatNumber(metrics.dataset.products)} />
+                      <CompactStat
+                        label="Контрактов"
+                        value={formatNumber(metrics.dataset.contracts)}
+                      />
+                      <CompactStat label="Профилей" value={formatNumber(metrics.dataset.profiles)} />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-sm text-muted-foreground">
+                    Метрики будут подгружены при открытии вкладки.
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="data" className="space-y-6">
+            <div className="grid gap-6 xl:grid-cols-[1.1fr_1fr]">
+              <Card className="border-border/80 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Быстрый старт</CardTitle>
+                  <CardDescription>
+                    Загрузка встроенного датасета из папки проекта, без ручного выбора CSV.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    Используй этот режим перед защитой, чтобы быстро поднять систему на полном
+                    наборе данных.
+                  </div>
+                  <Button className="w-full" disabled={datasetBusy} onClick={() => void handleBootstrap()}>
+                    {datasetBusy ? <Loader2 className="size-4 animate-spin" /> : <Database className="size-4" />}
+                    Загрузить встроенный датасет
+                  </Button>
+                </CardContent>
+              </Card>
+
+              <Card className="border-border/80 shadow-sm">
+                <CardHeader>
+                  <CardTitle>Очистка базы</CardTitle>
+                  <CardDescription>
+                    Полностью очищает SQLite-базу и индекс, чтобы начать с чистого состояния.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                    Полезно, если нужно быстро перепроверить сценарий первой загрузки или заменить
+                    датасет перед новой демонстрацией.
+                  </div>
+                  <Button
+                    className="w-full"
+                    variant="destructive"
+                    disabled={datasetBusy}
+                    onClick={() => void handleClear()}
+                  >
+                    {datasetBusy ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                    Очистить текущую базу
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle>Дозагрузка данных</CardTitle>
+                <CardDescription>
+                  Для новых файлов заказчика: выбор режима, загрузка CSV и отслеживание фоновой
+                  обработки.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4 xl:grid-cols-[220px_1fr_1fr_auto] xl:items-end">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Режим</label>
+                  <Select value={mode} onValueChange={(value) => setMode(value as UploadMode)}>
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {incrementalModes.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {incrementalModes.find((item) => item.value === mode)?.description}
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Файл СТЕ</label>
+                  <Input
+                    type="file"
+                    accept=".csv"
+                    onChange={(event) => setSteFile(event.target.files?.[0] ?? null)}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Файл контрактов</label>
+                  <Input
+                    type="file"
+                    accept=".csv"
+                    onChange={(event) => setContractsFile(event.target.files?.[0] ?? null)}
+                  />
+                </div>
+
+                <Button
+                  className="h-10"
+                  disabled={
+                    datasetBusy ||
+                    (mode === 'upsert_ste' && !steFile) ||
+                    (mode === 'append_contracts' && !contractsFile) ||
+                    (mode === 'upsert_bundle' && (!steFile || !contractsFile))
+                  }
+                  onClick={() => void handleUpload()}
+                >
+                  {datasetBusy ? <Loader2 className="size-4 animate-spin" /> : <FolderSync className="size-4" />}
+                  Запустить
+                </Button>
+              </CardContent>
+            </Card>
+
+            <Card className="border-border/80 shadow-sm">
+              <CardHeader>
+                <CardTitle>Статус импорта</CardTitle>
+                <CardDescription>
+                  Последняя активная или успешная задача обработки датасета.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {displayedJob ? (
+                  <>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+                      <CompactStat label="Job ID" value={displayedJob.jobId} />
+                      <CompactStat label="Статус" value={displayedJob.status} />
+                      <CompactStat label="Режим" value={displayedJob.mode} />
+                      <CompactStat label="Прогресс" value={`${Math.round(displayedJob.progress)}%`} />
+                    </div>
+                    <div className="h-2 rounded-full bg-muted">
+                      <div
+                        className="h-2 rounded-full bg-primary"
+                        style={{ width: `${Math.max(4, Math.min(100, displayedJob.progress))}%` }}
+                      />
+                    </div>
+                    {displayedJob.warnings.length > 0 ? (
+                      <div className="space-y-2 rounded-xl border bg-muted/30 p-4">
+                        <div className="text-sm font-medium">Warnings</div>
+                        <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+                          {displayedJob.warnings.map((warning) => (
+                            <li key={warning}>{warning}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+                    {displayedJob.errors.length > 0 ? (
+                      <div className="space-y-2 rounded-xl border border-destructive/30 bg-destructive/5 p-4">
+                        <div className="text-sm font-medium text-destructive">Errors</div>
+                        <ul className="list-disc space-y-1 pl-5 text-sm text-destructive">
+                          {displayedJob.errors.map((message) => (
+                            <li key={message}>{message}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
                   </>
                 ) : (
-                  <p className="muted">Метрики еще не считались после старта приложения.</p>
+                  <div className="text-sm text-muted-foreground">
+                    Задач обработки пока не было.
+                  </div>
                 )}
-              </Card>
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
+      </div>
 
-              <Card
-                title="Процесс поиска под пользователя"
-                description="Короткая схема того, что можно объяснить на защите."
-              >
-                <div className="process-grid">
-                  <div className="process-step">
-                    <strong>1. Подготовка запроса</strong>
-                    <p>Нормализация, исправление раскладки, typo correction, синонимы.</p>
+      <Dialog open={Boolean(activeResult)} onOpenChange={(open) => !open && setActiveResult(null)}>
+        <DialogContent className="max-w-3xl">
+          {activeResult ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>{activeResult.product.title}</DialogTitle>
+                <DialogDescription>
+                  {activeResult.product.category}
+                  {activeResult.product.brandGuess ? ` · ${activeResult.product.brandGuess}` : ''}
+                  {activeResult.product.modelGuess ? ` · ${activeResult.product.modelGuess}` : ''}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+                <div className="space-y-4">
+                  <div className="rounded-xl border bg-muted/30 p-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Почему карточка поднялась
+                    </div>
+                    <div className="mt-2 text-sm text-balance">{activeResult.explanation}</div>
                   </div>
-                  <div className="process-step">
-                    <strong>2. Быстрый retrieval</strong>
-                    <p>SQLite FTS5 поднимает кандидатов по каталогу без внешних сервисов.</p>
-                  </div>
-                  <div className="process-step">
-                    <strong>3. Прозрачный rerank</strong>
-                    <p>Учитываются текст, категория, атрибуты, числа, история контрактов и live-сигналы.</p>
-                  </div>
-                  <div className="process-step">
-                    <strong>4. Объяснение</strong>
-                    <p>API возвращает score breakdown и интерпретацию запроса, а не скрытую эвристику.</p>
+                  <div className="rounded-xl border bg-muted/30 p-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Характеристики
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {activeResult.product.attributes.map((attribute) => (
+                        <Badge
+                          key={`${activeResult.product.id}-${attribute.name}-${attribute.value}`}
+                          variant="secondary"
+                        >
+                          {attribute.name}: {attribute.value}
+                        </Badge>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              </Card>
+                <div className="space-y-4">
+                  <div className="rounded-xl border bg-muted/30 p-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Score
+                    </div>
+                    <div className="mt-2 text-2xl font-semibold">{activeResult.score.toFixed(2)}</div>
+                  </div>
+                  <div className="rounded-xl border bg-muted/30 p-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Детализация ранжирования
+                    </div>
+                    <div className="mt-3 space-y-2 text-sm">
+                      {(activeResult.scoreBreakdown ?? []).map((factor) => (
+                        <div
+                          key={`${activeResult.product.id}-${factor.type}-${factor.reason}`}
+                          className="flex items-start justify-between gap-3 rounded-lg border bg-background px-3 py-2"
+                        >
+                          <div className="min-w-0 text-balance">{factor.reason}</div>
+                          <div className="shrink-0 font-medium">+{factor.value.toFixed(2)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Button onClick={() => void handleResultEvent('marked_relevant', activeResult, 1)}>
+                      Релевантно
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => void handleResultEvent('marked_irrelevant', activeResult, 1)}
+                    >
+                      Не релевантно
+                    </Button>
+                  </div>
+                </div>
+              </div>
             </>
           ) : null}
-        </main>
-      </div>
+        </DialogContent>
+      </Dialog>
     </div>
-  );
+  )
 }
 
-export default App;
+export default App

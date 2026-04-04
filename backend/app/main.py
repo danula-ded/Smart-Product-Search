@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import warnings
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
+from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from app.api import router
 from app.config import settings
 from app.services import RuntimeServices, build_runtime
+
+warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
 
 
 def initialize_app_state(app: FastAPI) -> RuntimeServices:

@@ -21,6 +21,7 @@ from app.schemas import (
     SavedResultRequestSchema,
     SavedResultResponseSchema,
     SavedResultsListResponseSchema,
+    SearchAnalysisResponseSchema,
     SearchRequestSchema,
     SearchResponseSchema,
 )
@@ -117,8 +118,22 @@ async def search_products(
         limit=payload.limit,
         offset=payload.offset,
         include_debug=payload.include_debug,
+        filters=payload.filters or {},
     )
     return SearchResponseSchema(**response)
+
+
+@router.post(
+    "/search/analyze",
+    response_model=SearchAnalysisResponseSchema,
+    tags=["Search"],
+)
+async def analyze_search_query(
+    request: Request, payload: SearchRequestSchema = Body(...)
+) -> SearchAnalysisResponseSchema:
+    runtime = get_runtime(request)
+    response = runtime.search.analyze_query(payload.query)
+    return SearchAnalysisResponseSchema(**response)
 
 
 @router.post("/events", response_model=EventResponseSchema, tags=["Search"])
