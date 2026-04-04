@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 import uuid
@@ -232,6 +233,7 @@ class SearchService:
         ]
         ranked = [item for item in ranked if item["score"] > 0]
         ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
+        ranked = self._blend_recommendation_feed(ranked, customer_id)
         rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
 
         if track_event and session_id:
@@ -759,10 +761,25 @@ class SearchService:
             )
             self._merge_recommendation_rows(candidate_rows, popular_rows)
 
-        selected_entries = list(candidate_rows.values())[: candidate_limit * 2]
+        ranked_entries = sorted(
+            candidate_rows.values(),
+            key=lambda entry: (
+                -self._recommendation_proxy_score(entry),
+                -int(entry.get("popularity", 0)),
+                entry["product"]["title_raw"],
+                entry["product"]["ste_id"],
+            ),
+        )
+        selected_entries = ranked_entries[: candidate_limit * 4]
         attr_map = self._load_attribute_map([entry["product"]["ste_id"] for entry in selected_entries])
         for entry in selected_entries:
             entry["attributes"] = attr_map.get(entry["product"]["ste_id"], [])
+            entry["explorationBonus"] = self._stable_exploration_bonus(
+                customer_id,
+                entry["product"]["ste_id"],
+                entry["product"]["category_norm"],
+                has_direct_history=float(entry.get("historyWeight", 0.0)) > 0,
+            )
         return selected_entries
 
     def _merge_recommendation_rows(
@@ -889,6 +906,32 @@ class SearchService:
             "sessionCategories": session_categories,
         }
 
+    def _recommendation_proxy_score(self, entry: dict[str, Any]) -> float:
+        """Mix popularity, category affinity, and direct history before final rerank."""
+        history_weight = float(entry.get("historyWeight", 0.0))
+        category_weight = float(entry.get("categoryWeight", 0.0))
+        popularity = max(0, int(entry.get("popularity", 0)))
+        proxy = 0.42 * math.log1p(popularity)
+        proxy += 0.28 * math.log1p(category_weight)
+        proxy += 0.22 * math.log1p(history_weight)
+        if history_weight <= 0 and category_weight > 0:
+            proxy += 0.12
+        return proxy
+
+    def _stable_exploration_bonus(
+        self,
+        customer_id: str | None,
+        ste_id: str,
+        category_norm: str,
+        *,
+        has_direct_history: bool,
+    ) -> float:
+        seed = f"{customer_id or 'global'}::{category_norm}::{ste_id}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        value = int(digest[:8], 16) / 0xFFFFFFFF
+        ceiling = 0.04 if has_direct_history else 0.18
+        return round(value * ceiling, 4)
+
     def _score_candidate(
         self,
         candidate: dict[str, Any],
@@ -926,6 +969,7 @@ class SearchService:
         title_tokens = set(tokenize(title_norm))
         query_tokens = [token for token in context.retrieval_tokens if token]
         matched_tokens = [token for token in query_tokens if token in title_tokens]
+        category_matched = any(token in category_norm for token in query_tokens)
         if matched_tokens:
             token_bonus = min(0.9, 0.18 * len(set(matched_tokens)))
             score += token_bonus
@@ -937,7 +981,7 @@ class SearchService:
                 }
             )
 
-        if any(token in category_norm for token in query_tokens):
+        if category_matched:
             score += 0.6
             factors.append(
                 {
@@ -987,9 +1031,18 @@ class SearchService:
             )
 
         if overlay:
+            relevance_gate = min(
+                1.0,
+                0.2
+                + 0.16 * len(set(matched_tokens))
+                + 0.12 * attr_matches
+                + 0.18 * numeric_matches
+                + (0.18 if context.corrected_query and context.corrected_query in title_norm else 0.0)
+                + (0.12 if category_matched else 0.0),
+            )
             product_weight = overlay["profileProducts"].get(row["ste_id"], 0.0)
             if product_weight > 0:
-                bonus = min(1.4, 0.15 * product_weight)
+                bonus = min(0.75, 0.28 * math.log1p(product_weight)) * relevance_gate
                 score += bonus
                 factors.append(
                     {
@@ -1001,7 +1054,9 @@ class SearchService:
 
             category_weight = overlay["profileCategories"].get(category_norm, 0.0)
             if category_weight > 0:
-                bonus = min(0.8, 0.06 * category_weight)
+                bonus = min(0.55, 0.14 * math.log1p(category_weight)) * max(
+                    0.45, relevance_gate
+                )
                 score += bonus
                 factors.append(
                     {
@@ -1019,9 +1074,9 @@ class SearchService:
                     continue
                 if token in search_text or token in title_norm or token in category_norm:
                     token_hits.append(token)
-                    token_bonus += min(0.3, 0.03 * token_weight)
+                    token_bonus += min(0.16, 0.015 * token_weight)
             if token_bonus > 0:
-                token_bonus = min(0.9, token_bonus)
+                token_bonus = min(0.45, token_bonus) * max(0.55, relevance_gate)
                 score += token_bonus
                 factors.append(
                     {
@@ -1090,7 +1145,7 @@ class SearchService:
 
         history_weight = float(candidate.get("historyWeight", 0.0))
         if history_weight > 0:
-            bonus = min(3.4, 0.55 * history_weight)
+            bonus = min(1.15, 0.34 * math.log1p(history_weight))
             score += bonus
             factors.append(
                 {
@@ -1102,7 +1157,7 @@ class SearchService:
 
         category_weight = float(candidate.get("categoryWeight", 0.0))
         if category_weight > 0:
-            bonus = min(1.9, 0.24 * category_weight)
+            bonus = min(0.95, 0.2 * math.log1p(category_weight))
             score += bonus
             factors.append(
                 {
@@ -1114,13 +1169,28 @@ class SearchService:
 
         popularity = int(candidate.get("popularity", 0))
         if popularity > 0:
-            bonus = min(0.9, 0.12 * math.log1p(popularity))
+            bonus = min(1.05, 0.16 * math.log1p(popularity))
             score += bonus
             factors.append(
                 {
                     "type": "popular",
                     "value": round(bonus, 4),
                     "reason": "Товар часто встречается в закупках и подходит для стартовой витрины.",
+                }
+            )
+
+        exploration_bonus = float(candidate.get("explorationBonus", 0.0))
+        if exploration_bonus > 0:
+            score += exploration_bonus
+            factors.append(
+                {
+                    "type": "exploration",
+                    "value": round(exploration_bonus, 4),
+                    "reason": (
+                        "В подборку добавлен близкий вариант из подходящей категории, чтобы не показывать только ранее купленные СТЕ."
+                        if history_weight <= 0
+                        else "Подборка слегка разнообразена, чтобы рядом с привычными СТЕ появлялись похожие варианты."
+                    ),
                 }
             )
 
@@ -1134,9 +1204,9 @@ class SearchService:
             for token, token_weight in profile_tokens:
                 if token in search_text:
                     token_hits.append(token)
-                    token_bonus += min(0.18, 0.018 * token_weight)
+                    token_bonus += min(0.12, 0.012 * token_weight)
             if token_bonus > 0:
-                token_bonus = min(1.1, token_bonus)
+                token_bonus = min(0.55, token_bonus)
                 score += token_bonus
                 factors.append(
                     {
@@ -1183,11 +1253,54 @@ class SearchService:
             "score": score,
             "explanation": "; ".join(explanation_parts[:4])
             or "Подборка сформирована по истории закупок и популярности товара.",
+            "_recommendationMeta": {
+                "historyWeight": history_weight,
+                "categoryWeight": category_weight,
+                "popularity": popularity,
+            },
         }
         if include_debug:
             payload["scoreBreakdown"] = factors
             payload["corrections"] = []
         return payload
+
+    def _blend_recommendation_feed(
+        self,
+        ranked: list[dict[str, Any]],
+        customer_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not customer_id:
+            for item in ranked:
+                item.pop("_recommendationMeta", None)
+            return ranked
+
+        direct_history: list[dict[str, Any]] = []
+        related_category: list[dict[str, Any]] = []
+        popular_only: list[dict[str, Any]] = []
+
+        for item in ranked:
+            meta = item.get("_recommendationMeta", {})
+            history_weight = float(meta.get("historyWeight", 0.0))
+            category_weight = float(meta.get("categoryWeight", 0.0))
+            if history_weight > 0:
+                direct_history.append(item)
+            elif category_weight > 0:
+                related_category.append(item)
+            else:
+                popular_only.append(item)
+
+        blended: list[dict[str, Any]] = []
+        while direct_history or related_category or popular_only:
+            for bucket in (direct_history, related_category, direct_history, popular_only):
+                if bucket:
+                    blended.append(bucket.pop(0))
+            if not related_category and not popular_only and direct_history:
+                blended.extend(direct_history)
+                break
+
+        for item in blended:
+            item.pop("_recommendationMeta", None)
+        return blended
 
     def _product_payload(self, row, attributes) -> dict[str, Any]:
         unique_attributes = self._dedupe_attributes(attributes)
