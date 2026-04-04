@@ -3,12 +3,20 @@ import {
   ArrowDownRight,
   ArrowUpRight,
   BadgeCheck,
+  Bookmark,
+  ChevronLeft,
+  ChevronRight,
+  CornerUpLeft,
   Database,
   Filter,
   FolderSync,
+  Info,
   Loader2,
+  Eye,
   RefreshCcw,
   Search,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   UserRound,
 } from 'lucide-react'
@@ -69,6 +77,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 type TabId = 'search' | 'dynamics' | 'metrics' | 'data'
 
@@ -89,6 +98,41 @@ const incrementalModes: Array<{ value: UploadMode; label: string; description: s
     description: 'Обновить и каталог, и историю закупок за один проход.',
   },
 ]
+
+const PAGE_SIZE_OPTIONS = [12, 24, 48]
+
+const ACTION_DETAILS = {
+  open: {
+    label: 'Открыть',
+    description: 'Открывает карточку товара и дает мягкий положительный сигнал текущему товару.',
+    impact: 'Поднимает этот товар и похожие позиции в текущей сессии.',
+  },
+  details: {
+    label: 'Детали',
+    description: 'Открывает полную карточку без оценочного сигнала.',
+    impact: 'На ранжирование не влияет.',
+  },
+  relevant: {
+    label: 'Релевантно',
+    description: 'Сильный положительный сигнал: результат подошел.',
+    impact: 'Заметно поднимает товар и его категорию в текущей сессии.',
+  },
+  save: {
+    label: 'Сохранить',
+    description: 'Промежуточный положительный сигнал: товар пригодился для дальнейшей работы.',
+    impact: 'Добавляет умеренный положительный вес для этого товара.',
+  },
+  bounce: {
+    label: 'Быстрый возврат',
+    description: 'Негативный сигнал: карточку открыли, но быстро вернулись к поиску.',
+    impact: 'Понижает этот товар и слегка ослабляет похожую категорию.',
+  },
+  irrelevant: {
+    label: 'Не релевантно',
+    description: 'Сильный отрицательный сигнал: результат не соответствует запросу.',
+    impact: 'Сильно понижает товар и связанные позиции в текущей сессии.',
+  },
+} as const
 
 function createSessionId() {
   return `session-${Math.random().toString(36).slice(2, 10)}`
@@ -131,6 +175,39 @@ function toggleArrayValue(values: string[] | undefined, value: string, checked: 
     current.delete(value)
   }
   return Array.from(current)
+}
+
+function formatSignedScore(value: number) {
+  return `${value >= 0 ? '+' : ''}${value.toFixed(2)}`
+}
+
+function buildVisiblePages(currentPage: number, totalPages: number) {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1)
+  }
+
+  const pages = new Set<number>([1, totalPages, currentPage - 1, currentPage, currentPage + 1])
+  if (currentPage <= 3) {
+    pages.add(2)
+    pages.add(3)
+  }
+  if (currentPage >= totalPages - 2) {
+    pages.add(totalPages - 1)
+    pages.add(totalPages - 2)
+  }
+
+  const sorted = Array.from(pages)
+    .filter((page) => page >= 1 && page <= totalPages)
+    .sort((left, right) => left - right)
+
+  const output: Array<number | 'ellipsis'> = []
+  sorted.forEach((page, index) => {
+    if (index > 0 && page - sorted[index - 1] > 1) {
+      output.push('ellipsis')
+    }
+    output.push(page)
+  })
+  return output
 }
 
 function CompactStat(props: { label: string; value: string | number; icon?: ReactNode }) {
@@ -209,6 +286,149 @@ function FilterBucket(props: {
   )
 }
 
+function ActionIconButton(props: {
+  label: string
+  description: string
+  impact: string
+  icon: ReactNode
+  variant?: 'default' | 'outline' | 'secondary' | 'ghost' | 'destructive'
+  onClick: () => void
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          size="icon-sm"
+          variant={props.variant ?? 'outline'}
+          aria-label={props.label}
+          onClick={props.onClick}
+        >
+          {props.icon}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-[260px] whitespace-normal">
+        <div className="space-y-1">
+          <div className="font-medium">{props.label}</div>
+          <div className="text-[11px] text-background/80">{props.description}</div>
+          <div className="text-[11px] text-background/80">{props.impact}</div>
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
+function FeedbackLegend() {
+  return (
+    <Card className="border-border/80 shadow-sm">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-base">Как влияют действия на карточке</CardTitle>
+        <CardDescription>
+          Подсказки повторяются на иконках. Положительные сигналы поднимают похожие результаты в этой
+          сессии, отрицательные сразу перестраивают выдачу вниз.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {[
+          { key: 'open', icon: <Eye className="size-4" /> },
+          { key: 'relevant', icon: <ThumbsUp className="size-4" /> },
+          { key: 'save', icon: <Bookmark className="size-4" /> },
+          { key: 'details', icon: <Info className="size-4" /> },
+          { key: 'bounce', icon: <CornerUpLeft className="size-4" /> },
+          { key: 'irrelevant', icon: <ThumbsDown className="size-4" /> },
+        ].map((item) => {
+          const details = ACTION_DETAILS[item.key as keyof typeof ACTION_DETAILS]
+          return (
+            <div key={item.key} className="rounded-xl border bg-muted/20 p-3">
+              <div className="flex items-center gap-2 text-sm font-medium">
+                {item.icon}
+                <span>{details.label}</span>
+              </div>
+              <div className="mt-2 text-sm text-muted-foreground">{details.description}</div>
+              <div className="mt-2 text-xs text-foreground/80">{details.impact}</div>
+            </div>
+          )
+        })}
+      </CardContent>
+    </Card>
+  )
+}
+
+function SearchPagination(props: {
+  currentPage: number
+  totalPages: number
+  pageSize: number
+  totalCount: number
+  onPageChange: (page: number) => void
+  onPageSizeChange: (pageSize: number) => void
+  disabled?: boolean
+}) {
+  const visiblePages = buildVisiblePages(props.currentPage, props.totalPages)
+
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border bg-card px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="text-sm text-muted-foreground">
+        {`Показано ${formatNumber(props.pageSize)} на странице, всего ${formatNumber(props.totalCount)}`}
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Select
+          value={String(props.pageSize)}
+          onValueChange={(value) => props.onPageSizeChange(Number(value))}
+        >
+          <SelectTrigger className="h-8 w-[92px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PAGE_SIZE_OPTIONS.map((value) => (
+              <SelectItem key={value} value={String(value)}>
+                {value} / стр.
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+
+        <Button
+          size="icon-sm"
+          variant="outline"
+          disabled={props.disabled || props.currentPage <= 1}
+          onClick={() => props.onPageChange(props.currentPage - 1)}
+        >
+          <ChevronLeft className="size-4" />
+        </Button>
+
+        <div className="flex items-center gap-1">
+          {visiblePages.map((page, index) =>
+            page === 'ellipsis' ? (
+              <span key={`ellipsis-${index}`} className="px-2 text-sm text-muted-foreground">
+                …
+              </span>
+            ) : (
+              <Button
+                key={page}
+                size="sm"
+                variant={page === props.currentPage ? 'default' : 'outline'}
+                disabled={props.disabled}
+                onClick={() => props.onPageChange(page)}
+              >
+                {page}
+              </Button>
+            ),
+          )}
+        </div>
+
+        <Button
+          size="icon-sm"
+          variant="outline"
+          disabled={props.disabled || props.currentPage >= props.totalPages}
+          onClick={() => props.onPageChange(props.currentPage + 1)}
+        >
+          <ChevronRight className="size-4" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function SearchResultCard(props: {
   result: SearchResult
   position: number
@@ -223,9 +443,9 @@ function SearchResultCard(props: {
 
   return (
     <Card className="h-full border-border/80 shadow-sm">
-      <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-2">
-          <div className="space-y-2">
+      <CardHeader className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 space-y-2">
             <div className="flex flex-wrap items-center gap-2">
               <Badge variant="secondary">#{props.position}</Badge>
               <Badge variant="outline">{props.result.product.category}</Badge>
@@ -234,15 +454,93 @@ function SearchResultCard(props: {
               ) : null}
             </div>
             <CardTitle className="text-balance leading-6">{props.result.product.title}</CardTitle>
+            <CardDescription className="max-w-[72ch]">{props.result.explanation}</CardDescription>
           </div>
-          <CardAction>
-            <div className="rounded-lg border bg-muted/40 px-3 py-1.5 text-right">
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">score</div>
-              <div className="text-sm font-semibold">{props.result.score.toFixed(2)}</div>
+          <CardAction className="flex max-w-[220px] flex-wrap items-start justify-end gap-2">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  className="rounded-xl border bg-muted/40 px-3 py-2 text-right transition-colors hover:bg-muted"
+                >
+                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Оценка
+                  </div>
+                  <div className="text-base font-semibold">{props.result.score.toFixed(2)}</div>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="left" className="max-w-[320px] whitespace-normal">
+                <div className="space-y-2">
+                  <div className="font-medium">Почему карточка оказалась выше</div>
+                  <div className="text-[11px] text-background/80">
+                    Итоговый score складывается из совпадения в индексе, характеристик, истории
+                    заказчика и действий в текущей сессии.
+                  </div>
+                  {(props.result.scoreBreakdown ?? []).slice(0, 8).map((factor) => (
+                    <div
+                      key={`${props.result.product.id}-${factor.type}-${factor.reason}`}
+                      className="flex items-start justify-between gap-3"
+                    >
+                      <div className="min-w-0 text-[11px] text-background/90">{factor.reason}</div>
+                      <div className="shrink-0 text-[11px] font-medium">
+                        {formatSignedScore(factor.value)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+
+            <div className="flex flex-wrap justify-end gap-1">
+              <ActionIconButton
+                label={ACTION_DETAILS.open.label}
+                description={ACTION_DETAILS.open.description}
+                impact={ACTION_DETAILS.open.impact}
+                icon={<Eye className="size-4" />}
+                onClick={props.onOpen}
+              />
+              <ActionIconButton
+                label={ACTION_DETAILS.relevant.label}
+                description={ACTION_DETAILS.relevant.description}
+                impact={ACTION_DETAILS.relevant.impact}
+                icon={<ThumbsUp className="size-4" />}
+                variant="secondary"
+                onClick={props.onRelevant}
+              />
+              <ActionIconButton
+                label={ACTION_DETAILS.save.label}
+                description={ACTION_DETAILS.save.description}
+                impact={ACTION_DETAILS.save.impact}
+                icon={<Bookmark className="size-4" />}
+                onClick={props.onSave}
+              />
+              <ActionIconButton
+                label={ACTION_DETAILS.details.label}
+                description={ACTION_DETAILS.details.description}
+                impact={ACTION_DETAILS.details.impact}
+                icon={<Info className="size-4" />}
+                variant="ghost"
+                onClick={props.onDetails}
+              />
+              <ActionIconButton
+                label={ACTION_DETAILS.bounce.label}
+                description={ACTION_DETAILS.bounce.description}
+                impact={ACTION_DETAILS.bounce.impact}
+                icon={<CornerUpLeft className="size-4" />}
+                variant="ghost"
+                onClick={props.onBounce}
+              />
+              <ActionIconButton
+                label={ACTION_DETAILS.irrelevant.label}
+                description={ACTION_DETAILS.irrelevant.description}
+                impact={ACTION_DETAILS.irrelevant.impact}
+                icon={<ThumbsDown className="size-4" />}
+                variant="destructive"
+                onClick={props.onIrrelevant}
+              />
             </div>
           </CardAction>
         </div>
-        <CardDescription>{props.result.explanation}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
@@ -261,7 +559,7 @@ function SearchResultCard(props: {
         {topFactors.length > 0 ? (
           <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
             <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              Факторы ранжирования
+              Ключевые факторы ранжирования
             </div>
             <div className="space-y-2 text-sm">
               {topFactors.map((factor) => (
@@ -271,15 +569,19 @@ function SearchResultCard(props: {
                 >
                   <div className="min-w-0 text-balance text-foreground/90">{factor.reason}</div>
                   <div className="shrink-0 font-medium text-foreground/70">
-                    +{factor.value.toFixed(2)}
+                    {formatSignedScore(factor.value)}
                   </div>
                 </div>
               ))}
             </div>
           </div>
         ) : null}
+        <div className="flex flex-wrap justify-between gap-3 border-t pt-4 text-xs text-muted-foreground">
+          <span>Оценочные действия вынесены в правый верхний угол карточки.</span>
+          <span>Кнопка «Детали» только открывает карточку и не меняет ранжирование.</span>
+        </div>
       </CardContent>
-      <CardFooter className="flex flex-wrap items-center gap-2">
+      <CardFooter className="hidden">
         <Button size="sm" onClick={props.onOpen}>
           Открыть
         </Button>
@@ -323,6 +625,8 @@ function App() {
   const [selectedCustomer, setSelectedCustomer] = useState('')
   const [sessionId, setSessionId] = useState(createSessionId())
   const [includeDebug, setIncludeDebug] = useState(true)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0])
   const [filters, setFilters] = useState<SearchFilters>({})
   const [searchState, setSearchState] = useState<SearchResponse | null>(null)
   const [previousSearchState, setPreviousSearchState] = useState<SearchResponse | null>(null)
@@ -461,6 +765,8 @@ function App() {
     setSearchState(null)
     setPreviousSearchState(null)
     setFilters({})
+    setPage(1)
+    setPageSize(PAGE_SIZE_OPTIONS[0])
     setSessionId(createSessionId())
     setActiveResult(null)
   }
@@ -486,6 +792,8 @@ function App() {
     nextCustomerId?: string
     nextSessionId?: string
     nextFilters?: SearchFilters
+    nextPage?: number
+    nextPageSize?: number
     targetTab?: TabId
   }) {
     const normalizedQuery = query.trim()
@@ -497,25 +805,45 @@ function App() {
     const customerId = options?.nextCustomerId ?? (selectedCustomer || null)
     const currentSession = options?.nextSessionId ?? sessionId
     const currentFilters = options?.nextFilters ?? filters
+    const requestedPageSize = options?.nextPageSize ?? pageSize
+    const requestedPage = Math.max(1, options?.nextPage ?? page)
+    const requestedOffset = (requestedPage - 1) * requestedPageSize
 
     setSearching(true)
     setError(null)
 
     try {
-      const payload = await searchProducts({
+      let payload = await searchProducts({
         query: normalizedQuery,
         customerId,
         sessionId: currentSession,
-        limit: 12,
-        offset: 0,
+        limit: requestedPageSize,
+        offset: requestedOffset,
         includeDebug,
         filters: currentFilters,
       })
+
+      let resolvedPage = requestedPage
+      const maxPage = Math.max(1, Math.ceil(Math.max(payload.totalCount, 1) / requestedPageSize))
+      if (payload.totalCount > 0 && requestedPage > maxPage) {
+        resolvedPage = maxPage
+        payload = await searchProducts({
+          query: normalizedQuery,
+          customerId,
+          sessionId: currentSession,
+          limit: requestedPageSize,
+          offset: (resolvedPage - 1) * requestedPageSize,
+          includeDebug,
+          filters: currentFilters,
+        })
+      }
 
       if (options?.capturePrevious && searchState) {
         setPreviousSearchState(searchState)
       }
       setSearchState(payload)
+      setPage(resolvedPage)
+      setPageSize(requestedPageSize)
       setActiveTab(options?.targetTab ?? 'search')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось выполнить поиск.')
@@ -620,22 +948,26 @@ function App() {
     const nextSessionId = createSessionId()
     setSelectedCustomer(nextCustomerId)
     setSessionId(nextSessionId)
+    setPage(1)
     setActiveResult(null)
     if (searchState && query.trim()) {
       void executeSearch({
         nextCustomerId,
         nextSessionId,
         capturePrevious: true,
+        nextPage: 1,
       })
     }
   }
 
   function updateFilters(nextFilters: SearchFilters) {
     setFilters(nextFilters)
+    setPage(1)
     if (searchState && query.trim()) {
       void executeSearch({
         nextFilters,
         capturePrevious: true,
+        nextPage: 1,
       })
     }
   }
@@ -660,6 +992,12 @@ function App() {
   const attributeFacets = searchState?.facets?.attributes ?? []
   const profileSummary = searchState?.profileSummary
   const selectedProfile = profiles.find((profile) => profile.customerId === selectedCustomer) ?? null
+  const currentPage = searchState
+    ? Math.max(1, Math.floor(searchState.offset / Math.max(searchState.limit, 1)) + 1)
+    : page
+  const totalPages = searchState
+    ? Math.max(1, Math.ceil(searchState.totalCount / Math.max(searchState.limit, 1)))
+    : 1
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -774,7 +1112,7 @@ function App() {
                         onKeyDown={(event) => {
                           if (event.key === 'Enter') {
                             event.preventDefault()
-                            void executeSearch({ targetTab: 'search' })
+                            void executeSearch({ targetTab: 'search', nextPage: 1 })
                           }
                         }}
                         placeholder="Например: aktirf smartbuy 16"
@@ -809,7 +1147,7 @@ function App() {
                     <Button
                       className="h-11"
                       disabled={!hasDataset || searching || query.trim().length === 0}
-                      onClick={() => void executeSearch({ targetTab: 'search' })}
+                      onClick={() => void executeSearch({ targetTab: 'search', nextPage: 1 })}
                     >
                       {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
                       Искать
@@ -820,10 +1158,12 @@ function App() {
                       onClick={() => {
                         const nextSessionId = createSessionId()
                         setSessionId(nextSessionId)
+                        setPage(1)
                         if (searchState && query.trim()) {
                           void executeSearch({
                             nextSessionId,
                             capturePrevious: true,
+                            nextPage: 1,
                           })
                         }
                       }}
@@ -1100,19 +1440,42 @@ function App() {
                       <div className="text-lg font-semibold">Выдача</div>
                       <div className="text-sm text-muted-foreground">
                         {searchState
-                          ? `${formatNumber(searchState.totalCount)} результатов, показано ${searchState.results.length}`
+                          ? `${formatNumber(searchState.totalCount)} результатов, страница ${formatNumber(currentPage)} из ${formatNumber(totalPages)}`
                           : 'Сначала выполни поиск.'}
                       </div>
                     </div>
                     {searchState ? (
                       <div className="flex flex-wrap gap-2">
-                        <Badge variant="outline">Normalize {searchState.timingsMs.normalize} ms</Badge>
-                        <Badge variant="outline">Retrieve {searchState.timingsMs.retrieve} ms</Badge>
-                        <Badge variant="outline">Rerank {searchState.timingsMs.rerank} ms</Badge>
-                        <Badge>Total {searchState.timingsMs.total} ms</Badge>
+                        <Badge variant="outline">Нормализация {searchState.timingsMs.normalize} ms</Badge>
+                        <Badge variant="outline">Поиск {searchState.timingsMs.retrieve} ms</Badge>
+                        <Badge variant="outline">Переранжирование {searchState.timingsMs.rerank} ms</Badge>
+                        <Badge>Всего {searchState.timingsMs.total} ms</Badge>
                       </div>
                     ) : null}
                   </div>
+
+                  {searchState ? <FeedbackLegend /> : null}
+
+                  {searchState ? (
+                    <SearchPagination
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      pageSize={searchState.limit}
+                      totalCount={searchState.totalCount}
+                      disabled={searching}
+                      onPageChange={(nextPage) => {
+                        void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                      }}
+                      onPageSizeChange={(nextPageSize) => {
+                        void executeSearch({
+                          capturePrevious: false,
+                          nextPage: 1,
+                          nextPageSize,
+                          targetTab: 'search',
+                        })
+                      }}
+                    />
+                  ) : null}
 
                   {searching && !searchState ? (
                     <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
@@ -1138,16 +1501,68 @@ function App() {
                         <SearchResultCard
                           key={result.product.id}
                           result={result}
-                          position={index + 1}
-                          onOpen={() => void handleResultEvent('result_opened', result, index + 1, true)}
-                          onRelevant={() => void handleResultEvent('marked_relevant', result, index + 1)}
-                          onIrrelevant={() => void handleResultEvent('marked_irrelevant', result, index + 1)}
-                          onBounce={() => void handleResultEvent('result_bounced', result, index + 1)}
-                          onSave={() => void handleResultEvent('result_saved', result, index + 1)}
+                          position={searchState.offset + index + 1}
+                          onOpen={() =>
+                            void handleResultEvent(
+                              'result_opened',
+                              result,
+                              searchState.offset + index + 1,
+                              true,
+                            )
+                          }
+                          onRelevant={() =>
+                            void handleResultEvent(
+                              'marked_relevant',
+                              result,
+                              searchState.offset + index + 1,
+                            )
+                          }
+                          onIrrelevant={() =>
+                            void handleResultEvent(
+                              'marked_irrelevant',
+                              result,
+                              searchState.offset + index + 1,
+                            )
+                          }
+                          onBounce={() =>
+                            void handleResultEvent(
+                              'result_bounced',
+                              result,
+                              searchState.offset + index + 1,
+                            )
+                          }
+                          onSave={() =>
+                            void handleResultEvent(
+                              'result_saved',
+                              result,
+                              searchState.offset + index + 1,
+                            )
+                          }
                           onDetails={() => setActiveResult(result)}
                         />
                       ))}
                     </div>
+                  ) : null}
+
+                  {searchState && searchState.results.length > 0 ? (
+                    <SearchPagination
+                      currentPage={currentPage}
+                      totalPages={totalPages}
+                      pageSize={searchState.limit}
+                      totalCount={searchState.totalCount}
+                      disabled={searching}
+                      onPageChange={(nextPage) => {
+                        void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                      }}
+                      onPageSizeChange={(nextPageSize) => {
+                        void executeSearch({
+                          capturePrevious: false,
+                          nextPage: 1,
+                          nextPageSize,
+                          targetTab: 'search',
+                        })
+                      }}
+                    />
                   ) : null}
 
                   {searchState && searchState.results.length === 0 ? (
@@ -1457,9 +1872,9 @@ function App() {
       </div>
 
       <Dialog open={Boolean(activeResult)} onOpenChange={(open) => !open && setActiveResult(null)}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="w-[min(1280px,calc(100vw-2rem))] max-w-none p-0">
           {activeResult ? (
-            <>
+            <div className="max-h-[calc(100vh-2rem)] overflow-y-auto p-6">
               <DialogHeader>
                 <DialogTitle>{activeResult.product.title}</DialogTitle>
                 <DialogDescription>
@@ -1468,7 +1883,7 @@ function App() {
                   {activeResult.product.modelGuess ? ` · ${activeResult.product.modelGuess}` : ''}
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
                 <div className="space-y-4">
                   <div className="rounded-xl border bg-muted/30 p-4">
                     <div className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1510,7 +1925,7 @@ function App() {
                           className="flex items-start justify-between gap-3 rounded-lg border bg-background px-3 py-2"
                         >
                           <div className="min-w-0 text-balance">{factor.reason}</div>
-                          <div className="shrink-0 font-medium">+{factor.value.toFixed(2)}</div>
+                          <div className="shrink-0 font-medium">{formatSignedScore(factor.value)}</div>
                         </div>
                       ))}
                     </div>
@@ -1528,7 +1943,7 @@ function App() {
                   </div>
                 </div>
               </div>
-            </>
+            </div>
           ) : null}
         </DialogContent>
       </Dialog>

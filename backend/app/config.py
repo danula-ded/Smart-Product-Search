@@ -51,7 +51,7 @@ class Settings:
             os.getenv("DB_PATH", self.RUNTIME_DIR / "search.sqlite")
         ).resolve()
 
-        self.SEARCH_CANDIDATES = int(os.getenv("SEARCH_CANDIDATES", "200"))
+        self.SEARCH_CANDIDATES = int(os.getenv("SEARCH_CANDIDATES", "1500"))
         self.LEXICON_LIMIT = int(os.getenv("LEXICON_LIMIT", "5000"))
         self.JOB_WORKERS = int(os.getenv("JOB_WORKERS", "1"))
         self.METRICS_SAMPLE_SIZE = int(os.getenv("METRICS_SAMPLE_SIZE", "18"))

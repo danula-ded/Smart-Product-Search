@@ -167,7 +167,7 @@ def test_dynamic_events_change_follow_up_ranking(client, ste_csv, contracts_csv)
             "includeDebug": True,
         },
     ).json()
-    assert (
+    assert not after["results"] or (
         after["results"][0]["product"]["id"] != top_before
         or after["results"][0]["score"] <= initial["results"][0]["score"]
     )

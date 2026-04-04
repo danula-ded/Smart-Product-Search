@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -33,12 +33,12 @@ class ProductSchema(BaseModel):
 
 
 class SearchRequestSchema(BaseModel):
-    query: Annotated[str, Field(min_length=1, max_length=1000)]
-    customer_id: Annotated[str | None, Field(alias="customerId")] = None
-    session_id: Annotated[str | None, Field(alias="sessionId")] = None
-    limit: Annotated[int, Field(ge=1, le=100)] = 20
-    offset: Annotated[int, Field(ge=0)] = 0
-    include_debug: Annotated[bool, Field(alias="includeDebug")] = False
+    query: str = Field(min_length=1, max_length=1000)
+    customer_id: str | None = Field(default=None, alias="customerId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+    include_debug: bool = Field(default=False, alias="includeDebug")
     filters: dict[str, list[str]] | None = None
 
     model_config = ConfigDict(populate_by_name=True)
@@ -120,13 +120,13 @@ class SearchAnalysisResponseSchema(BaseModel):
 
 
 class EventRequestSchema(BaseModel):
-    session_id: Annotated[str | None, Field(alias="sessionId")] = None
-    customer_id: Annotated[str | None, Field(alias="customerId")] = None
-    event_type: Annotated[str, Field(alias="eventType")]
-    product_id: Annotated[str | None, Field(alias="productId")] = None
+    session_id: str | None = Field(default=None, alias="sessionId")
+    customer_id: str | None = Field(default=None, alias="customerId")
+    event_type: str = Field(alias="eventType")
+    product_id: str | None = Field(default=None, alias="productId")
     query: str | None = None
     position: int | None = None
-    dwell_ms: Annotated[int | None, Field(alias="dwellMs")] = None
+    dwell_ms: int | None = Field(default=None, alias="dwellMs")
     note: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
@@ -191,8 +191,8 @@ class MetricsSummarySchema(BaseModel):
 
 
 class SavedResultRequestSchema(BaseModel):
-    user_id: Annotated[str, Field(alias="userId")]
-    product_id: Annotated[str, Field(alias="productId")]
+    user_id: str = Field(alias="userId")
+    product_id: str = Field(alias="productId")
     note: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
@@ -213,9 +213,9 @@ class SavedResultsListResponseSchema(BaseModel):
 
 
 class FeedbackRequestSchema(BaseModel):
-    user_id: Annotated[str, Field(alias="userId")]
-    product_id: Annotated[str, Field(alias="productId")]
-    is_relevant: Annotated[bool | None, Field(alias="isRelevant")] = None
+    user_id: str = Field(alias="userId")
+    product_id: str = Field(alias="productId")
+    is_relevant: bool | None = Field(default=None, alias="isRelevant")
     comment: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)

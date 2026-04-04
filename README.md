@@ -169,8 +169,11 @@ docker compose up --build
 
 После старта открой:
 
-- UI: `http://127.0.0.1:8000`
-- Swagger: `http://127.0.0.1:8000/docs`
+- UI: `http://localhost:8000`
+- Swagger: `http://localhost:8000/docs`
+
+Если одновременно запущены и `uvicorn`, и `docker compose`, браузер может попадать в старый локальный процесс на `127.0.0.1:8000`.
+Для Docker-режима открывай `http://localhost:8000` или останови локальный `uvicorn`.
 
 Что важно:
 

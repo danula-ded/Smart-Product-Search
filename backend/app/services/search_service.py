@@ -30,11 +30,25 @@ from app.storage.sqlite_db import SQLiteDatabase, utcnow_iso
 
 
 EVENT_WEIGHTS = {
-    "result_opened": 0.35,
-    "result_saved": 0.8,
-    "marked_relevant": 1.2,
-    "marked_irrelevant": -2.4,
-    "result_bounced": -1.4,
+    "result_opened": 0.45,
+    "result_saved": 1.1,
+    "marked_relevant": 1.8,
+    "marked_irrelevant": -4.5,
+    "result_bounced": -2.8,
+}
+
+FACTOR_TITLES = {
+    "lexical": "Совпадение в поисковом индексе",
+    "title_phrase": "Точная фраза в названии",
+    "token_overlap": "Совпавшие слова в названии",
+    "category": "Совпадение по категории",
+    "attributes": "Совпадение по характеристикам",
+    "numeric": "Совпадение по числовым значениям",
+    "history_product": "История закупок по этому СТЕ",
+    "history_category": "История закупок по категории",
+    "history_tokens": "Совпадение с профилем заказчика",
+    "session_product": "Влияние действий в текущей сессии",
+    "session_category": "Влияние действий в текущей сессии по категории",
 }
 
 FTS_TERM_RE = re.compile(r"[a-z\u0400-\u04ff0-9]+", re.IGNORECASE)
@@ -103,7 +117,13 @@ class SearchService:
             }
 
         retrieval_started_at = perf_counter()
-        candidates = self._retrieve_candidates(context.retrieval_tokens)
+        candidate_pool = max(
+            settings.SEARCH_CANDIDATES,
+            offset + limit + 200,
+            (offset + limit) * 6,
+        )
+        estimated_total = self._count_candidates(context.retrieval_tokens)
+        candidates = self._retrieve_candidates(context.retrieval_tokens, candidate_pool)
         retrieval_ms = int((perf_counter() - retrieval_started_at) * 1000)
 
         overlay = (
@@ -128,6 +148,7 @@ class SearchService:
         if active_filters:
             ranked = self._apply_filters(ranked, active_filters)
         facets = self._build_facets(ranked)
+        total_count = len(ranked) if active_filters else max(len(ranked), estimated_total)
         rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
 
         if track_event and session_id:
@@ -153,7 +174,7 @@ class SearchService:
             "results": ranked[offset : offset + limit],
             "facets": facets,
             "appliedFilters": active_filters,
-            "totalCount": len(ranked),
+            "totalCount": total_count,
             "limit": limit,
             "offset": offset,
             "timingsMs": {
@@ -507,29 +528,35 @@ class SearchService:
                 return cache[prefix]
         return []
 
-    def _retrieve_candidates(self, tokens: list[str]) -> list[dict[str, Any]]:
+    def _candidate_queries(self, tokens: list[str]) -> list[str]:
         search_tokens = self._prepare_fts_terms(tokens)
         if not search_tokens:
             return []
 
         deduped_tokens = list(dict.fromkeys(search_tokens[:8]))
-        exact_query = " ".join(f'"{token}"' for token in deduped_tokens)
-        rows = self.db.query_all(
-            """
-            SELECT
-                p.*,
-                bm25(product_fts) AS bm25
-            FROM product_fts
-            JOIN products p ON p.ste_id = product_fts.ste_id
-            WHERE product_fts MATCH ?
-            ORDER BY bm25(product_fts)
-            LIMIT ?
-            """,
-            [exact_query, settings.SEARCH_CANDIDATES],
-        )
+        queries = [" ".join(f'"{token}"' for token in deduped_tokens)]
+        if len(deduped_tokens) > 1:
+            queries.append(" OR ".join(f'"{token}"' for token in deduped_tokens))
+        queries.append(" OR ".join(f"{token}*" for token in deduped_tokens[:6]))
+        return list(dict.fromkeys(query for query in queries if query))
 
-        if not rows and len(deduped_tokens) > 1:
-            fallback_query = " OR ".join(f'"{token}"' for token in deduped_tokens)
+    def _count_candidates(self, tokens: list[str]) -> int:
+        for query in self._candidate_queries(tokens):
+            row = self.db.query_one(
+                """
+                SELECT COUNT(*) AS count
+                FROM product_fts
+                WHERE product_fts MATCH ?
+                """,
+                [query],
+            )
+            if row and int(row["count"]) > 0:
+                return int(row["count"])
+        return 0
+
+    def _retrieve_candidates(self, tokens: list[str], candidate_limit: int) -> list[dict[str, Any]]:
+        rows: list[Any] = []
+        for query in self._candidate_queries(tokens):
             rows = self.db.query_all(
                 """
                 SELECT
@@ -541,24 +568,10 @@ class SearchService:
                 ORDER BY bm25(product_fts)
                 LIMIT ?
                 """,
-                [fallback_query, settings.SEARCH_CANDIDATES],
+                [query, candidate_limit],
             )
-
-        if not rows:
-            prefix_query = " OR ".join(f"{token}*" for token in deduped_tokens[:6])
-            rows = self.db.query_all(
-                """
-                SELECT
-                    p.*,
-                    bm25(product_fts) AS bm25
-                FROM product_fts
-                JOIN products p ON p.ste_id = product_fts.ste_id
-                WHERE product_fts MATCH ?
-                ORDER BY bm25(product_fts)
-                LIMIT ?
-                """,
-                [prefix_query, settings.SEARCH_CANDIDATES],
-            )
+            if rows:
+                break
 
         ste_ids = [row["ste_id"] for row in rows]
         attr_rows: list[Any] = []
@@ -680,12 +693,22 @@ class SearchService:
 
         factors: list[dict[str, Any]] = []
         score = bm25_to_score(candidate["bm25"]) * 2.0
-        factors.append({"type": "lexical", "value": round(score, 4), "reason": "FTS match"})
+        factors.append(
+            {
+                "type": "lexical",
+                "value": round(score, 4),
+                "reason": "Совпадение в полнотекстовом индексе",
+            }
+        )
 
         if context.corrected_query and context.corrected_query in title_norm:
             score += 1.2
             factors.append(
-                {"type": "title_phrase", "value": 1.2, "reason": "Exact title phrase"}
+                {
+                    "type": "title_phrase",
+                    "value": 1.2,
+                    "reason": "Точная фраза запроса найдена в названии",
+                }
             )
 
         title_tokens = set(tokenize(title_norm))
@@ -698,13 +721,19 @@ class SearchService:
                 {
                     "type": "token_overlap",
                     "value": round(token_bonus, 4),
-                    "reason": f"Title tokens: {', '.join(sorted(set(matched_tokens))[:6])}",
+                    "reason": f"Совпавшие слова в названии: {', '.join(sorted(set(matched_tokens))[:6])}",
                 }
             )
 
         if any(token in category_norm for token in query_tokens):
             score += 0.6
-            factors.append({"type": "category", "value": 0.6, "reason": row["category_raw"]})
+            factors.append(
+                {
+                    "type": "category",
+                    "value": 0.6,
+                    "reason": f"Категория совпала: {row['category_raw']}",
+                }
+            )
 
         attr_matches = 0
         attr_reason: list[str] = []
@@ -722,7 +751,7 @@ class SearchService:
                 {
                     "type": "attributes",
                     "value": round(attr_bonus, 4),
-                    "reason": "; ".join(attr_reason[:3]),
+                    "reason": f"Совпавшие характеристики: {'; '.join(attr_reason[:3])}",
                 }
             )
 
@@ -741,7 +770,7 @@ class SearchService:
                 {
                     "type": "numeric",
                     "value": round(numeric_bonus, 4),
-                    "reason": f"Matched numeric constraints: {numeric_matches}",
+                    "reason": f"Совпало числовых ограничений: {numeric_matches}",
                 }
             )
 
@@ -754,7 +783,7 @@ class SearchService:
                     {
                         "type": "history_product",
                         "value": round(bonus, 4),
-                        "reason": "Customer purchased this STE before",
+                        "reason": "Заказчик уже покупал этот СТЕ",
                     }
                 )
 
@@ -766,7 +795,7 @@ class SearchService:
                     {
                         "type": "history_category",
                         "value": round(bonus, 4),
-                        "reason": "Customer often buys this category",
+                        "reason": "Заказчик часто покупает эту категорию",
                     }
                 )
 
@@ -786,7 +815,7 @@ class SearchService:
                     {
                         "type": "history_tokens",
                         "value": round(token_bonus, 4),
-                        "reason": f"Customer profile matches terms: {', '.join(token_hits[:5])}",
+                        "reason": f"Профиль заказчика усилил термины: {', '.join(token_hits[:5])}",
                     }
                 )
 
@@ -797,7 +826,11 @@ class SearchService:
                     {
                         "type": "session_product",
                         "value": round(session_delta, 4),
-                        "reason": "Session behavior changed this product score",
+                        "reason": (
+                            "Положительный сигнал в сессии поднял этот товар"
+                            if session_delta > 0
+                            else "Негативный сигнал в сессии понизил этот товар"
+                        ),
                     }
                 )
 
@@ -808,7 +841,11 @@ class SearchService:
                     {
                         "type": "session_category",
                         "value": round(session_category_delta, 4),
-                        "reason": "Session behavior changed category score",
+                        "reason": (
+                            "Положительный сигнал в сессии усилил категорию"
+                            if session_category_delta > 0
+                            else "Негативный сигнал в сессии ослабил категорию"
+                        ),
                     }
                 )
 
@@ -817,7 +854,7 @@ class SearchService:
         payload = {
             "product": self._product_payload(row, attributes),
             "score": score,
-            "explanation": "; ".join(explanation_parts[:4]) or "Matched by search index",
+            "explanation": "; ".join(explanation_parts[:4]) or "Совпадение по поисковому индексу",
         }
         if include_debug:
             payload["scoreBreakdown"] = factors
