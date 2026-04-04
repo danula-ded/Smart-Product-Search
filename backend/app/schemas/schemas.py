@@ -1,366 +1,217 @@
-"""
-Pydantic schemas for API requests and responses.
+"""API schemas for upload-driven search MVP."""
 
-These define the contract for API endpoints and data validation.
-"""
+from __future__ import annotations
 
-from typing import Optional, List, Dict, Any
-from pydantic import BaseModel, Field, ConfigDict
-from datetime import datetime
+from typing import Any
 
+from pydantic import BaseModel, ConfigDict, Field
 
-# ============================================================================
-# Health Check
-# ============================================================================
 
 class HealthResponse(BaseModel):
-    """Health check response."""
-    status: str = Field(..., description="Service status: 'healthy' or 'unhealthy'")
-    version: str = Field(..., description="API version")
+    status: str
+    version: str
 
-
-# ============================================================================
-# Product Schemas
-# ============================================================================
 
 class ProductAttributeSchema(BaseModel):
-    """Product attribute/characteristic."""
-    name: str = Field(..., description="Attribute name (e.g., 'Color', 'Size')")
-    value: str = Field(..., description="Attribute value")
+    name: str
+    value: str
+    numeric_value: float | None = Field(default=None, alias="numericValue")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {"name": "Color", "value": "Black"}
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ProductSchema(BaseModel):
-    """
-    Product entity schema for API responses.
-    
-    Contains both searchable fields and metadata.
-    """
-    id: str = Field(..., description="Unique product identifier")
-    title: str = Field(..., description="Product name/title (searchable)")
-    manufacturer: str = Field(..., description="Manufacturer name (searchable)")
-    model: str = Field(..., description="Product model (searchable)")
-    category_id: str = Field(..., description="Category ID (metadata)")
-    category_name: str = Field(..., description="Category name (searchable)")
-    image_url: str = Field(..., description="Product image URL (metadata)")
-    country_origin: str = Field(..., description="Country of origin (metadata)")
-    attributes: List[ProductAttributeSchema] = Field(
-        default_factory=list,
-        description="Product characteristics/specs (searchable)"
-    )
-    created_at: datetime = Field(..., description="Product creation timestamp")
+    id: str
+    title: str
+    category: str
+    brand_guess: str | None = Field(default=None, alias="brandGuess")
+    model_guess: str | None = Field(default=None, alias="modelGuess")
+    attributes_raw: str = Field(alias="attributesRaw")
+    attributes: list[ProductAttributeSchema] = Field(default_factory=list)
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "id": "prod_001",
-                "title": "Laptop ProBook",
-                "manufacturer": "HP",
-                "model": "ProBook 450",
-                "category_id": "cat_001",
-                "category_name": "Electronics",
-                "image_url": "https://example.com/image.jpg",
-                "country_origin": "USA",
-                "attributes": [
-                    {"name": "RAM", "value": "16GB"},
-                    {"name": "Storage", "value": "512GB SSD"}
-                ],
-                "created_at": "2024-01-01T00:00:00"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
-
-# ============================================================================
-# Search Schemas
-# ============================================================================
 
 class SearchRequestSchema(BaseModel):
-    """
-    Search request schema for POST /search endpoint.
-    """
-    query: str = Field(
-        ...,
-        min_length=1,
-        max_length=1000,
-        description="Free-form search query from user"
-    )
-    limit: int = Field(
-        default=20,
-        ge=1,
-        le=100,
-        description="Maximum number of results to return"
-    )
-    offset: int = Field(
-        default=0,
-        ge=0,
-        description="Pagination offset"
-    )
-    user_id: Optional[str] = Field(
-        default=None,
-        description="Optional user ID for personalization"
-    )
-    filters: Optional[Dict[str, Any]] = Field(
-        default=None,
-        description="Optional filters (category, price range, etc.)"
-    )
+    query: str = Field(min_length=1, max_length=1000)
+    customer_id: str | None = Field(default=None, alias="customerId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+    include_debug: bool = Field(default=False, alias="includeDebug")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "query": "black laptop with 16gb ram",
-                "limit": 20,
-                "offset": 0,
-                "user_id": "user_123",
-                "filters": {"category": "Electronics"}
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ScoreFactorSchema(BaseModel):
+    type: str
+    value: float
+    reason: str
 
 
 class SearchResultSchema(BaseModel):
-    """Single search result item."""
-    product: ProductSchema = Field(..., description="The product")
-    relevance_score: float = Field(
-        ...,
-        ge=0.0,
-        le=1.0,
-        description="Relevance score (0.0 to 1.0)"
+    product: ProductSchema
+    score: float
+    explanation: str
+    score_breakdown: list[ScoreFactorSchema] | None = Field(
+        default=None, alias="scoreBreakdown"
     )
-    match_reasons: List[str] = Field(
-        default_factory=list,
-        description="Reasons why this product matched the query"
-    )
+    corrections: list[dict[str, Any]] | None = None
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "product": {
-                    "id": "prod_001",
-                    "title": "Laptop ProBook",
-                    "manufacturer": "HP",
-                    "model": "ProBook 450",
-                    "category_id": "cat_001",
-                    "category_name": "Electronics",
-                    "image_url": "https://example.com/image.jpg",
-                    "country_origin": "USA",
-                    "attributes": []
-                },
-                "relevance_score": 0.95,
-                "match_reasons": ["Title matches 'laptop'", "Category matches query"]
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class ProfileSummarySchema(BaseModel):
+    customer_id: str = Field(alias="customerId")
+    customer_name: str = Field(alias="customerName")
+    purchase_count: int = Field(alias="purchaseCount")
+    matched_purchase_count: int = Field(alias="matchedPurchaseCount")
+    total_spend: float = Field(alias="totalSpend")
+    last_purchase_at: str | None = Field(default=None, alias="lastPurchaseAt")
+    top_categories: list[dict[str, Any]] = Field(alias="topCategories")
+    top_products: list[dict[str, Any]] = Field(alias="topProducts")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class QueryInterpretationSchema(BaseModel):
+    corrected_tokens: list[str] = Field(alias="correctedTokens")
+    retrieval_tokens: list[str] = Field(alias="retrievalTokens")
+    layout_corrections: list[dict[str, Any]] = Field(alias="layoutCorrections")
+    typo_corrections: list[dict[str, Any]] = Field(alias="typoCorrections")
+    synonym_mappings: list[dict[str, Any]] = Field(alias="synonymMappings")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SearchResponseSchema(BaseModel):
-    """
-    Search response schema for POST /search endpoint.
-    """
-    results: List[SearchResultSchema] = Field(
-        ...,
-        description="List of search results"
+    query: str
+    normalized_query: str = Field(alias="normalizedQuery")
+    corrected_query: str = Field(alias="correctedQuery")
+    applied_synonyms: list[str] = Field(alias="appliedSynonyms")
+    search_terms_used: list[str] = Field(alias="searchTermsUsed")
+    query_interpretation: QueryInterpretationSchema = Field(alias="queryInterpretation")
+    parser_source: str = Field(alias="parserSource")
+    profile_summary: ProfileSummarySchema | None = Field(
+        default=None, alias="profileSummary"
     )
-    total_count: int = Field(
-        ...,
-        description="Total number of matching results (before pagination)"
-    )
-    query: str = Field(..., description="The original search query")
-    limit: int = Field(..., description="Limit used in this request")
-    offset: int = Field(..., description="Offset used in this request")
+    results: list[SearchResultSchema]
+    total_count: int = Field(alias="totalCount")
+    limit: int
+    offset: int
+    timings_ms: dict[str, int] = Field(alias="timingsMs")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "results": [],
-                "total_count": 0,
-                "query": "black laptop",
-                "limit": 20,
-                "offset": 0
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
-# ============================================================================
-# Saved Results Schemas
-# ============================================================================
+class EventRequestSchema(BaseModel):
+    session_id: str | None = Field(default=None, alias="sessionId")
+    customer_id: str | None = Field(default=None, alias="customerId")
+    event_type: str = Field(alias="eventType")
+    product_id: str | None = Field(default=None, alias="productId")
+    query: str | None = None
+    position: int | None = None
+    dwell_ms: int | None = Field(default=None, alias="dwellMs")
+    note: str | None = None
 
-class SavedResultSchema(BaseModel):
-    """Saved search result."""
-    id: str = Field(..., description="Unique saved result ID")
-    user_id: str = Field(..., description="User who saved this result")
-    product_id: str = Field(..., description="Associated product ID")
-    product: ProductSchema = Field(..., description="Product details")
-    saved_at: datetime = Field(..., description="When this result was saved")
-    note: Optional[str] = Field(
-        default=None,
-        description="Optional user note about this product"
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "id": "saved_001",
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "product": {
-                    "id": "prod_001",
-                    "title": "Laptop ProBook",
-                    "manufacturer": "HP",
-                    "model": "ProBook 450",
-                    "category_id": "cat_001",
-                    "category_name": "Electronics",
-                    "image_url": "https://example.com/image.jpg",
-                    "country_origin": "USA",
-                    "attributes": [],
-                    "created_at": "2024-01-01T00:00:00"
-                },
-                "saved_at": "2024-01-01T12:00:00",
-                "note": "Good price"
-            }
-        }
-    )
+
+class EventResponseSchema(BaseModel):
+    success: bool
+    event_id: str = Field(alias="eventId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DatasetUploadResponseSchema(BaseModel):
+    job_id: str = Field(alias="jobId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DatasetActionResponseSchema(BaseModel):
+    success: bool
+    message: str | None = None
+    job_id: str | None = Field(default=None, alias="jobId")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DatasetJobSchema(BaseModel):
+    job_id: str = Field(alias="jobId")
+    status: str
+    mode: str
+    created_at: str = Field(alias="createdAt")
+    started_at: str | None = Field(default=None, alias="startedAt")
+    finished_at: str | None = Field(default=None, alias="finishedAt")
+    progress: float
+    warnings: list[str]
+    errors: list[str]
+    stats: dict[str, Any]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DatasetSummarySchema(BaseModel):
+    counts: dict[str, int]
+    active_index: dict[str, Any] = Field(alias="activeIndex")
+    imports: list[DatasetJobSchema]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class DemoProfileSchema(BaseModel):
+    customer_id: str = Field(alias="customerId")
+    label: str
+    summary: dict[str, Any]
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
+class MetricsSummarySchema(BaseModel):
+    dataset: dict[str, Any]
+    baseline: dict[str, float]
+    personalized: dict[str, float]
 
 
 class SavedResultRequestSchema(BaseModel):
-    """Request to save a product."""
-    user_id: str = Field(..., description="User ID")
-    product_id: str = Field(..., description="Product ID to save")
-    note: Optional[str] = Field(
-        default=None,
-        max_length=500,
-        description="Optional note about this product"
-    )
+    user_id: str = Field(alias="userId")
+    product_id: str = Field(alias="productId")
+    note: str | None = None
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "note": "Check this model later"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SavedResultResponseSchema(BaseModel):
-    """Response after saving a result."""
-    success: bool = Field(..., description="Whether the save was successful")
-    saved_result: Optional[SavedResultSchema] = Field(
-        default=None,
-        description="The saved result (if successful)"
-    )
+    success: bool
+    saved_result: dict[str, Any] | None = Field(default=None, alias="savedResult")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "success": True,
-                "saved_result": None
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class SavedResultsListResponseSchema(BaseModel):
-    """List of user's saved results."""
-    results: List[SavedResultSchema] = Field(
-        ...,
-        description="List of saved results"
-    )
-    total_count: int = Field(..., description="Total number of saved results")
+    results: list[dict[str, Any]]
+    total_count: int = Field(alias="totalCount")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "results": [],
-                "total_count": 0
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
-
-# ============================================================================
-# Feedback Schemas
-# ============================================================================
 
 class FeedbackRequestSchema(BaseModel):
-    """
-    Request to submit feedback on search results or products.
-    """
-    user_id: str = Field(..., description="User providing feedback")
-    product_id: str = Field(..., description="Product being rated")
-    search_query: Optional[str] = Field(
-        default=None,
-        description="The original search query (if feedback is on search result)"
-    )
-    rating: Optional[int] = Field(
-        default=None,
-        ge=1,
-        le=5,
-        description="Star rating (1-5)"
-    )
-    is_relevant: Optional[bool] = Field(
-        default=None,
-        description="Was this search result relevant?"
-    )
-    comment: Optional[str] = Field(
-        default=None,
-        max_length=1000,
-        description="User comment or feedback text"
-    )
+    user_id: str = Field(alias="userId")
+    product_id: str = Field(alias="productId")
+    is_relevant: bool | None = Field(default=None, alias="isRelevant")
+    comment: str | None = None
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "search_query": "black laptop",
-                "rating": 5,
-                "is_relevant": True,
-                "comment": "Great product and matches my search"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class FeedbackResponseSchema(BaseModel):
-    """Response after submitting feedback."""
-    success: bool = Field(..., description="Whether feedback was recorded")
-    feedback_id: Optional[str] = Field(
-        default=None,
-        description="ID of the recorded feedback"
-    )
+    success: bool
+    feedback_id: str | None = Field(default=None, alias="feedbackId")
 
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "success": True,
-                "feedback_id": "fbk_001"
-            }
-        }
-    )
+    model_config = ConfigDict(populate_by_name=True)
 
-
-# ============================================================================
-# Generic Response Schemas
-# ============================================================================
 
 class ErrorResponseSchema(BaseModel):
-    """Error response format."""
-    error: str = Field(..., description="Error message")
-    detail: Optional[str] = Field(default=None, description="Detailed error information")
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "error": "Validation Error",
-                "detail": "Query must not be empty"
-            }
-        }
-    )
+    detail: str

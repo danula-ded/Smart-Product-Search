@@ -1,0 +1,34 @@
+[
+  {
+    "query": "бескамерная шина superguider",
+    "expected": {
+      "detectedCategory": "шина",
+      "detectedBrand": "Superguider",
+      "detectedModel": null,
+      "detectedAttributes": {
+        "Тип": "Бескамерная"
+      }
+    }
+  },
+  {
+    "query": "ozka ind80",
+    "expected": {
+      "detectedCategory": null,
+      "detectedBrand": "Ozka",
+      "detectedModel": "IND80",
+      "detectedAttributes": {}
+    }
+  },
+  {
+    "query": "шина для мини-погрузчика 16.5",
+    "expected": {
+      "detectedCategory": "шина",
+      "detectedBrand": null,
+      "detectedModel": null,
+      "detectedAttributes": {},
+      "numericConstraints": {
+        "Диаметр": "16.5"
+      }
+    }
+  }
+]

@@ -1,0 +1,843 @@
+"""SQLite-backed search service with dynamic personalization."""
+
+from __future__ import annotations
+
+import json
+import re
+import uuid
+from dataclasses import dataclass
+from difflib import SequenceMatcher
+from time import perf_counter
+from typing import Any
+
+try:  # pragma: no cover - optional dependency path
+    from rapidfuzz import fuzz, process
+except Exception:  # pragma: no cover
+    fuzz = None
+    process = None
+
+from app.config import settings
+from app.services.text_utils import (
+    SYNONYM_MAP,
+    bm25_to_score,
+    expand_synonyms,
+    keyboard_layout_variants,
+    normalize_text,
+    parse_numeric_value,
+    tokenize,
+)
+from app.storage.sqlite_db import SQLiteDatabase, utcnow_iso
+
+
+EVENT_WEIGHTS = {
+    "result_opened": 0.35,
+    "result_saved": 0.8,
+    "marked_relevant": 1.2,
+    "marked_irrelevant": -2.4,
+    "result_bounced": -1.4,
+}
+
+FTS_TERM_RE = re.compile(r"[a-z\u0400-\u04ff0-9]+", re.IGNORECASE)
+
+
+@dataclass
+class QueryContext:
+    original_query: str
+    normalized_query: str
+    corrected_query: str
+    corrected_tokens: list[str]
+    retrieval_tokens: list[str]
+    numeric_tokens: list[float]
+    corrections: list[dict[str, Any]]
+    applied_synonyms: list[str]
+    layout_corrections: list[dict[str, Any]]
+    typo_corrections: list[dict[str, Any]]
+    synonym_mappings: list[dict[str, Any]]
+
+
+class SearchService:
+    """Handles query normalization, retrieval, reranking, and event logging."""
+
+    def __init__(self, db: SQLiteDatabase) -> None:
+        self.db = db
+
+    def search(
+        self,
+        *,
+        query: str,
+        customer_id: str | None,
+        session_id: str | None,
+        limit: int,
+        offset: int,
+        include_debug: bool,
+        enable_personalization: bool = True,
+        track_event: bool = True,
+    ) -> dict[str, Any]:
+        started_at = perf_counter()
+        context = self._normalize_query(query)
+        normalization_ms = int((perf_counter() - started_at) * 1000)
+
+        if not context.retrieval_tokens:
+            return {
+                "query": query,
+                "normalizedQuery": context.normalized_query,
+                "correctedQuery": context.corrected_query,
+                "appliedSynonyms": context.applied_synonyms,
+                "searchTermsUsed": context.retrieval_tokens,
+                "queryInterpretation": self._query_interpretation_payload(context),
+                "parserSource": "rule_based",
+                "profileSummary": self.get_profile_summary(customer_id),
+                "results": [],
+                "totalCount": 0,
+                "limit": limit,
+                "offset": offset,
+                "timingsMs": {
+                    "normalize": normalization_ms,
+                    "retrieve": 0,
+                    "rerank": 0,
+                    "total": normalization_ms,
+                },
+            }
+
+        retrieval_started_at = perf_counter()
+        candidates = self._retrieve_candidates(context.retrieval_tokens)
+        retrieval_ms = int((perf_counter() - retrieval_started_at) * 1000)
+
+        overlay = (
+            self._load_personalization_overlay(customer_id, session_id)
+            if enable_personalization
+            else None
+        )
+
+        rerank_started_at = perf_counter()
+        ranked = [
+            self._score_candidate(
+                candidate,
+                context,
+                overlay=overlay,
+                include_debug=include_debug,
+            )
+            for candidate in candidates
+        ]
+        ranked = [item for item in ranked if item["score"] > 0]
+        ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
+        rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
+
+        if track_event and session_id:
+            self.record_event(
+                event_type="search_submitted",
+                session_id=session_id,
+                customer_id=customer_id,
+                product_id=None,
+                query=query,
+                position=None,
+                dwell_ms=None,
+            )
+
+        return {
+            "query": query,
+            "normalizedQuery": context.normalized_query,
+            "correctedQuery": context.corrected_query,
+            "appliedSynonyms": context.applied_synonyms,
+            "searchTermsUsed": context.retrieval_tokens,
+            "queryInterpretation": self._query_interpretation_payload(context),
+            "parserSource": "rule_based",
+            "profileSummary": self.get_profile_summary(customer_id),
+            "results": ranked[offset : offset + limit],
+            "totalCount": len(ranked),
+            "limit": limit,
+            "offset": offset,
+            "timingsMs": {
+                "normalize": normalization_ms,
+                "retrieve": retrieval_ms,
+                "rerank": rerank_ms,
+                "total": int((perf_counter() - started_at) * 1000),
+            },
+        }
+
+    def get_product(self, product_id: str) -> dict[str, Any] | None:
+        product = self.db.query_one(
+            """
+            SELECT * FROM products WHERE ste_id = ?
+            """,
+            [product_id],
+        )
+        if not product:
+            return None
+        attributes = self.db.query_all(
+            """
+            SELECT attr_name_raw, attr_value_raw, numeric_value, unit
+            FROM product_attributes
+            WHERE ste_id = ?
+            ORDER BY id
+            """,
+            [product_id],
+        )
+        return self._product_payload(product, attributes)
+
+    def record_event(
+        self,
+        *,
+        event_type: str,
+        session_id: str | None,
+        customer_id: str | None,
+        product_id: str | None,
+        query: str | None,
+        position: int | None,
+        dwell_ms: int | None,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        supported_events = {
+            "search_submitted",
+            "result_opened",
+            "result_bounced",
+            "result_saved",
+            "marked_relevant",
+            "marked_irrelevant",
+        }
+        if event_type not in supported_events:
+            raise ValueError("Unsupported event type.")
+
+        category_norm = None
+        if product_id:
+            row = self.db.query_one(
+                "SELECT category_norm FROM products WHERE ste_id = ?",
+                [product_id],
+            )
+            category_norm = row["category_norm"] if row else None
+
+        event_id = str(uuid.uuid4())
+        self.db.execute(
+            """
+            INSERT INTO events (
+                id, session_id, customer_inn, event_type, ste_id, category_norm,
+                query, position, dwell_ms, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                event_id,
+                session_id,
+                customer_id,
+                event_type,
+                product_id,
+                category_norm,
+                query,
+                position,
+                dwell_ms,
+                utcnow_iso(),
+            ],
+        )
+
+        if event_type == "result_saved" and product_id:
+            self.db.execute(
+                """
+                INSERT INTO saved_results (id, session_id, customer_inn, ste_id, note, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    str(uuid.uuid4()),
+                    session_id,
+                    customer_id,
+                    product_id,
+                    note,
+                    utcnow_iso(),
+                ],
+            )
+
+        return {"success": True, "eventId": event_id}
+
+    def list_demo_profiles(self) -> list[dict[str, Any]]:
+        rows = self.db.query_all("SELECT * FROM demo_profiles ORDER BY sort_order ASC")
+        return [
+            {
+                "customerId": row["customer_inn"],
+                "label": row["label"],
+                "summary": json.loads(row["summary_json"]),
+            }
+            for row in rows
+        ]
+
+    def get_profile_summary(self, customer_id: str | None) -> dict[str, Any] | None:
+        if not customer_id:
+            return None
+
+        row = self.db.query_one(
+            "SELECT * FROM customer_profiles WHERE customer_inn = ?",
+            [customer_id],
+        )
+        if not row:
+            return None
+
+        return {
+            "customerId": row["customer_inn"],
+            "customerName": row["customer_name"],
+            "purchaseCount": row["purchase_count"],
+            "matchedPurchaseCount": row["matched_purchase_count"],
+            "totalSpend": row["total_spend"],
+            "lastPurchaseAt": row["last_purchase_at"],
+            "topCategories": json.loads(row["top_categories_json"]),
+            "topProducts": json.loads(row["top_ste_ids_json"]),
+        }
+
+    def _normalize_query(self, query: str) -> QueryContext:
+        normalized_query = normalize_text(query)
+        tokens = tokenize(normalized_query)
+        lexicon_rows = self.db.query_all(
+            "SELECT term, doc_freq FROM lexicon ORDER BY doc_freq DESC LIMIT ?",
+            [settings.LEXICON_LIMIT],
+        )
+        lexicon = {row["term"]: int(row["doc_freq"]) for row in lexicon_rows}
+        lexicon_terms = list(lexicon.keys())
+        prefix_candidate_cache: dict[str, list[str]] = {}
+
+        corrections: list[dict[str, Any]] = []
+        corrected_tokens: list[str] = []
+        synonym_rewrites: list[str] = []
+        layout_corrections: list[dict[str, Any]] = []
+        typo_corrections: list[dict[str, Any]] = []
+        synonym_mappings: list[dict[str, Any]] = []
+
+        for token in tokens:
+            resolved = self._resolve_query_token(
+                token,
+                lexicon=lexicon,
+                lexicon_terms=lexicon_terms,
+                prefix_candidate_cache=prefix_candidate_cache,
+            )
+            corrected_tokens.append(resolved["displayToken"])
+            corrections.extend(resolved["corrections"])
+            layout_corrections.extend(resolved["layoutCorrections"])
+            typo_corrections.extend(resolved["typoCorrections"])
+            synonym_mappings.extend(resolved["synonymMappings"])
+            synonym_rewrites.extend(resolved["synonymRewrites"])
+
+        retrieval_tokens, applied_synonyms = expand_synonyms(corrected_tokens)
+        applied_synonyms = list(dict.fromkeys([*synonym_rewrites, *applied_synonyms]))
+
+        numeric_tokens: list[float] = []
+        for token in corrected_tokens:
+            numeric_value, _ = parse_numeric_value(token)
+            if numeric_value is not None:
+                numeric_tokens.append(numeric_value)
+
+        return QueryContext(
+            original_query=query,
+            normalized_query=normalized_query,
+            corrected_query=" ".join(corrected_tokens),
+            corrected_tokens=corrected_tokens,
+            retrieval_tokens=retrieval_tokens,
+            numeric_tokens=numeric_tokens,
+            corrections=corrections,
+            applied_synonyms=applied_synonyms,
+            layout_corrections=layout_corrections,
+            typo_corrections=typo_corrections,
+            synonym_mappings=synonym_mappings,
+        )
+
+    def _resolve_query_token(
+        self,
+        token: str,
+        *,
+        lexicon: dict[str, int],
+        lexicon_terms: list[str],
+        prefix_candidate_cache: dict[str, list[str]],
+    ) -> dict[str, Any]:
+        display_token = token
+        corrections: list[dict[str, Any]] = []
+        layout_corrections: list[dict[str, Any]] = []
+        typo_corrections: list[dict[str, Any]] = []
+        synonym_mappings: list[dict[str, Any]] = []
+        synonym_rewrites: list[str] = []
+
+        layout_variant = self._select_layout_variant(token, lexicon)
+        if layout_variant and layout_variant != token:
+            display_token = layout_variant
+            layout_entry = {
+                "type": "keyboard_layout",
+                "from": token,
+                "to": layout_variant,
+                "keyboard": self._detect_layout_direction(token),
+            }
+            corrections.append(layout_entry)
+            layout_corrections.append(layout_entry)
+
+        canonical = SYNONYM_MAP.get(display_token, display_token)
+        known_token = display_token in lexicon or canonical in lexicon
+        if not known_token and len(display_token) >= 4:
+            best = self._best_lexicon_match(display_token, lexicon_terms)
+            if best is None:
+                prefix_candidates = self._load_prefix_lexicon_candidates(
+                    display_token, prefix_candidate_cache
+                )
+                best = self._best_lexicon_match(display_token, prefix_candidates)
+            if best is not None:
+                if best["term"] == display_token:
+                    best = None
+            if best is not None:
+                display_token = best["term"]
+                typo_entry = {
+                    "type": "typo",
+                    "from": token,
+                    "to": best["term"],
+                    "score": best["score"],
+                }
+                corrections.append(typo_entry)
+                typo_corrections.append(typo_entry)
+
+        canonical = SYNONYM_MAP.get(display_token, display_token)
+        if canonical != display_token:
+            synonym_entry = {
+                "type": "synonym",
+                "from": display_token,
+                "to": canonical,
+            }
+            synonym_mappings.append(synonym_entry)
+            synonym_rewrites.append(f"{display_token} -> {canonical}")
+
+        return {
+            "displayToken": display_token,
+            "corrections": corrections,
+            "layoutCorrections": layout_corrections,
+            "typoCorrections": typo_corrections,
+            "synonymMappings": synonym_mappings,
+            "synonymRewrites": synonym_rewrites,
+        }
+
+    def _select_layout_variant(self, token: str, lexicon: dict[str, int]) -> str | None:
+        variants = []
+        for variant in keyboard_layout_variants(token):
+            canonical = SYNONYM_MAP.get(variant, variant)
+            score = lexicon.get(variant, 0) + lexicon.get(canonical, 0)
+            if score > 0:
+                variants.append((score, variant))
+        if not variants:
+            return None
+        variants.sort(key=lambda item: (-item[0], item[1]))
+        return variants[0][1]
+
+    def _detect_layout_direction(self, source: str) -> str:
+        if re.search(r"[a-z]", source, re.IGNORECASE) and not re.search(
+            r"[\u0400-\u04ff]", source, re.IGNORECASE
+        ):
+            return "en_to_ru"
+        if re.search(r"[\u0400-\u04ff]", source, re.IGNORECASE) and not re.search(
+            r"[a-z]", source, re.IGNORECASE
+        ):
+            return "ru_to_en"
+        return "mixed"
+
+    def _query_interpretation_payload(self, context: QueryContext) -> dict[str, Any]:
+        return {
+            "correctedTokens": context.corrected_tokens,
+            "retrievalTokens": context.retrieval_tokens,
+            "layoutCorrections": context.layout_corrections,
+            "typoCorrections": context.typo_corrections,
+            "synonymMappings": context.synonym_mappings,
+        }
+
+    def _best_lexicon_match(self, token: str, choices: list[str]) -> dict[str, Any] | None:
+        if not choices:
+            return None
+
+        if process is not None and fuzz is not None:
+            best = process.extractOne(
+                token,
+                choices,
+                scorer=fuzz.ratio,
+                score_cutoff=88,
+            )
+            if best:
+                return {"term": best[0], "score": round(float(best[1]), 2)}
+            return None
+
+        best_term = None
+        best_score = 0.0
+        for choice in choices:
+            score = SequenceMatcher(a=token, b=choice).ratio() * 100
+            if score >= 88 and score > best_score:
+                best_term = choice
+                best_score = score
+        if best_term is None:
+            return None
+        return {"term": best_term, "score": round(best_score, 2)}
+
+    def _load_prefix_lexicon_candidates(
+        self,
+        token: str,
+        cache: dict[str, list[str]],
+    ) -> list[str]:
+        for prefix_length in (5, 4, 3):
+            if len(token) < prefix_length:
+                continue
+            prefix = token[:prefix_length]
+            if prefix not in cache:
+                rows = self.db.query_all(
+                    """
+                    SELECT term
+                    FROM lexicon
+                    WHERE term LIKE ?
+                    ORDER BY doc_freq DESC
+                    LIMIT 128
+                    """,
+                    [f"{prefix}%"],
+                )
+                cache[prefix] = [row["term"] for row in rows]
+            if cache[prefix]:
+                return cache[prefix]
+        return []
+
+    def _retrieve_candidates(self, tokens: list[str]) -> list[dict[str, Any]]:
+        search_tokens = self._prepare_fts_terms(tokens)
+        if not search_tokens:
+            return []
+
+        deduped_tokens = list(dict.fromkeys(search_tokens[:8]))
+        exact_query = " ".join(f'"{token}"' for token in deduped_tokens)
+        rows = self.db.query_all(
+            """
+            SELECT
+                p.*,
+                bm25(product_fts) AS bm25
+            FROM product_fts
+            JOIN products p ON p.ste_id = product_fts.ste_id
+            WHERE product_fts MATCH ?
+            ORDER BY bm25(product_fts)
+            LIMIT ?
+            """,
+            [exact_query, settings.SEARCH_CANDIDATES],
+        )
+
+        if not rows and len(deduped_tokens) > 1:
+            fallback_query = " OR ".join(f'"{token}"' for token in deduped_tokens)
+            rows = self.db.query_all(
+                """
+                SELECT
+                    p.*,
+                    bm25(product_fts) AS bm25
+                FROM product_fts
+                JOIN products p ON p.ste_id = product_fts.ste_id
+                WHERE product_fts MATCH ?
+                ORDER BY bm25(product_fts)
+                LIMIT ?
+                """,
+                [fallback_query, settings.SEARCH_CANDIDATES],
+            )
+
+        if not rows:
+            prefix_query = " OR ".join(f"{token}*" for token in deduped_tokens[:6])
+            rows = self.db.query_all(
+                """
+                SELECT
+                    p.*,
+                    bm25(product_fts) AS bm25
+                FROM product_fts
+                JOIN products p ON p.ste_id = product_fts.ste_id
+                WHERE product_fts MATCH ?
+                ORDER BY bm25(product_fts)
+                LIMIT ?
+                """,
+                [prefix_query, settings.SEARCH_CANDIDATES],
+            )
+
+        ste_ids = [row["ste_id"] for row in rows]
+        attr_rows: list[Any] = []
+        if ste_ids:
+            placeholders = ",".join("?" for _ in ste_ids)
+            attr_rows = self.db.query_all(
+                f"""
+                SELECT
+                    ste_id,
+                    attr_name_raw,
+                    attr_name_norm,
+                    attr_value_raw,
+                    attr_value_norm,
+                    numeric_value
+                FROM product_attributes
+                WHERE ste_id IN ({placeholders})
+                """,
+                ste_ids,
+            )
+
+        attr_map: dict[str, list[Any]] = {}
+        for attr in attr_rows:
+            attr_map.setdefault(attr["ste_id"], []).append(attr)
+
+        return [
+            {
+                "product": row,
+                "bm25": float(row["bm25"]),
+                "attributes": attr_map.get(row["ste_id"], []),
+            }
+            for row in rows
+        ]
+
+    def _prepare_fts_terms(self, tokens: list[str]) -> list[str]:
+        prepared: list[str] = []
+        for token in tokens:
+            prepared.extend(part for part in FTS_TERM_RE.findall(token) if part)
+        return list(dict.fromkeys(prepared))
+
+    def _load_personalization_overlay(
+        self,
+        customer_id: str | None,
+        session_id: str | None,
+    ) -> dict[str, Any]:
+        profile_categories: dict[str, float] = {}
+        profile_products: dict[str, float] = {}
+        profile_tokens: dict[str, float] = {}
+
+        if customer_id:
+            profile_row = self.db.query_one(
+                """
+                SELECT token_weights_json
+                FROM customer_profiles
+                WHERE customer_inn = ?
+                """,
+                [customer_id],
+            )
+            if profile_row and profile_row["token_weights_json"]:
+                for item in json.loads(profile_row["token_weights_json"]):
+                    profile_tokens[item["value"]] = float(item["weight"])
+
+            for row in self.db.query_all(
+                "SELECT category_norm, weight FROM customer_category_stats WHERE customer_inn = ?",
+                [customer_id],
+            ):
+                profile_categories[row["category_norm"]] = float(row["weight"])
+
+            for row in self.db.query_all(
+                "SELECT ste_id, weight FROM customer_ste_stats WHERE customer_inn = ?",
+                [customer_id],
+            ):
+                profile_products[row["ste_id"]] = float(row["weight"])
+
+        session_products: dict[str, float] = {}
+        session_categories: dict[str, float] = {}
+        if session_id:
+            event_rows = self.db.query_all(
+                """
+                SELECT event_type, ste_id, category_norm
+                FROM events
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT 250
+                """,
+                [session_id],
+            )
+            for row in event_rows:
+                delta = EVENT_WEIGHTS.get(row["event_type"], 0.0)
+                if row["ste_id"]:
+                    session_products[row["ste_id"]] = (
+                        session_products.get(row["ste_id"], 0.0) + delta
+                    )
+                if row["category_norm"]:
+                    session_categories[row["category_norm"]] = (
+                        session_categories.get(row["category_norm"], 0.0) + delta * 0.6
+                    )
+
+        return {
+            "profileCategories": profile_categories,
+            "profileProducts": profile_products,
+            "profileTokens": profile_tokens,
+            "sessionProducts": session_products,
+            "sessionCategories": session_categories,
+        }
+
+    def _score_candidate(
+        self,
+        candidate: dict[str, Any],
+        context: QueryContext,
+        *,
+        overlay: dict[str, Any] | None,
+        include_debug: bool,
+    ) -> dict[str, Any]:
+        row = candidate["product"]
+        attributes = self._dedupe_attributes(candidate["attributes"])
+        title_norm = row["title_norm"]
+        category_norm = row["category_norm"]
+        search_text = row["search_text"]
+
+        factors: list[dict[str, Any]] = []
+        score = bm25_to_score(candidate["bm25"]) * 2.0
+        factors.append({"type": "lexical", "value": round(score, 4), "reason": "FTS match"})
+
+        if context.corrected_query and context.corrected_query in title_norm:
+            score += 1.2
+            factors.append(
+                {"type": "title_phrase", "value": 1.2, "reason": "Exact title phrase"}
+            )
+
+        title_tokens = set(tokenize(title_norm))
+        query_tokens = [token for token in context.retrieval_tokens if token]
+        matched_tokens = [token for token in query_tokens if token in title_tokens]
+        if matched_tokens:
+            token_bonus = min(0.9, 0.18 * len(set(matched_tokens)))
+            score += token_bonus
+            factors.append(
+                {
+                    "type": "token_overlap",
+                    "value": round(token_bonus, 4),
+                    "reason": f"Title tokens: {', '.join(sorted(set(matched_tokens))[:6])}",
+                }
+            )
+
+        if any(token in category_norm for token in query_tokens):
+            score += 0.6
+            factors.append({"type": "category", "value": 0.6, "reason": row["category_raw"]})
+
+        attr_matches = 0
+        attr_reason: list[str] = []
+        for attr in attributes:
+            if any(
+                token in attr["attr_name_norm"] or token in attr["attr_value_norm"]
+                for token in query_tokens
+            ):
+                attr_matches += 1
+                attr_reason.append(f"{attr['attr_name_raw']}={attr['attr_value_raw']}")
+        if attr_matches:
+            attr_bonus = min(1.2, 0.25 * attr_matches)
+            score += attr_bonus
+            factors.append(
+                {
+                    "type": "attributes",
+                    "value": round(attr_bonus, 4),
+                    "reason": "; ".join(attr_reason[:3]),
+                }
+            )
+
+        numeric_matches = 0
+        for numeric_value in context.numeric_tokens:
+            for attr in attributes:
+                if attr["numeric_value"] is None:
+                    continue
+                if abs(float(attr["numeric_value"]) - numeric_value) <= 0.01:
+                    numeric_matches += 1
+                    break
+        if numeric_matches:
+            numeric_bonus = min(1.0, 0.5 * numeric_matches)
+            score += numeric_bonus
+            factors.append(
+                {
+                    "type": "numeric",
+                    "value": round(numeric_bonus, 4),
+                    "reason": f"Matched numeric constraints: {numeric_matches}",
+                }
+            )
+
+        if overlay:
+            product_weight = overlay["profileProducts"].get(row["ste_id"], 0.0)
+            if product_weight > 0:
+                bonus = min(1.4, 0.15 * product_weight)
+                score += bonus
+                factors.append(
+                    {
+                        "type": "history_product",
+                        "value": round(bonus, 4),
+                        "reason": "Customer purchased this STE before",
+                    }
+                )
+
+            category_weight = overlay["profileCategories"].get(category_norm, 0.0)
+            if category_weight > 0:
+                bonus = min(0.8, 0.06 * category_weight)
+                score += bonus
+                factors.append(
+                    {
+                        "type": "history_category",
+                        "value": round(bonus, 4),
+                        "reason": "Customer often buys this category",
+                    }
+                )
+
+            token_hits: list[str] = []
+            token_bonus = 0.0
+            for token in dict.fromkeys(query_tokens):
+                token_weight = overlay["profileTokens"].get(token, 0.0)
+                if token_weight <= 0:
+                    continue
+                if token in search_text or token in title_norm or token in category_norm:
+                    token_hits.append(token)
+                    token_bonus += min(0.3, 0.03 * token_weight)
+            if token_bonus > 0:
+                token_bonus = min(0.9, token_bonus)
+                score += token_bonus
+                factors.append(
+                    {
+                        "type": "history_tokens",
+                        "value": round(token_bonus, 4),
+                        "reason": f"Customer profile matches terms: {', '.join(token_hits[:5])}",
+                    }
+                )
+
+            session_delta = overlay["sessionProducts"].get(row["ste_id"], 0.0)
+            if session_delta:
+                score += session_delta
+                factors.append(
+                    {
+                        "type": "session_product",
+                        "value": round(session_delta, 4),
+                        "reason": "Session behavior changed this product score",
+                    }
+                )
+
+            session_category_delta = overlay["sessionCategories"].get(category_norm, 0.0)
+            if session_category_delta:
+                score += session_category_delta
+                factors.append(
+                    {
+                        "type": "session_category",
+                        "value": round(session_category_delta, 4),
+                        "reason": "Session behavior changed category score",
+                    }
+                )
+
+        score = round(score, 6)
+        explanation_parts = [factor["reason"] for factor in factors if factor["value"] != 0]
+        payload = {
+            "product": self._product_payload(row, attributes),
+            "score": score,
+            "explanation": "; ".join(explanation_parts[:4]) or "Matched by search index",
+        }
+        if include_debug:
+            payload["scoreBreakdown"] = factors
+            payload["corrections"] = context.corrections
+        return payload
+
+    def _product_payload(self, row, attributes) -> dict[str, Any]:
+        unique_attributes = self._dedupe_attributes(attributes)
+        return {
+            "id": row["ste_id"],
+            "title": row["title_raw"],
+            "category": row["category_raw"],
+            "brandGuess": row["brand_guess"],
+            "modelGuess": row["model_guess"],
+            "attributesRaw": row["attributes_raw"],
+            "attributes": [
+                {
+                    "name": attr["attr_name_raw"],
+                    "value": attr["attr_value_raw"],
+                    "numericValue": attr["numeric_value"],
+                }
+                for attr in unique_attributes
+            ],
+        }
+
+    def _dedupe_attributes(self, attributes: list[Any]) -> list[Any]:
+        seen: set[tuple[str, str, str]] = set()
+        unique_attributes: list[Any] = []
+        for attr in attributes:
+            name_norm = attr["attr_name_norm"] if "attr_name_norm" in attr.keys() else None
+            name_raw = attr["attr_name_raw"] if "attr_name_raw" in attr.keys() else None
+            value_norm = attr["attr_value_norm"] if "attr_value_norm" in attr.keys() else None
+            value_raw = attr["attr_value_raw"] if "attr_value_raw" in attr.keys() else None
+            numeric_value = attr["numeric_value"] if "numeric_value" in attr.keys() else None
+            key = (
+                name_norm or name_raw or "",
+                value_norm or value_raw or "",
+                "" if numeric_value is None else str(numeric_value),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            unique_attributes.append(attr)
+        return unique_attributes

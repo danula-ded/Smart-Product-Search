@@ -1,324 +1,217 @@
-"""
-Tests for the Smart Product Search API.
+"""Integration tests for upload, search, and dynamic personalization APIs."""
 
-Minimal tests checking application startup and API contracts.
-"""
+from __future__ import annotations
 
-import pytest
-from fastapi.testclient import TestClient
-from app.main import app
+from app.config import settings
+
+from .conftest import wait_for_job
 
 
-@pytest.fixture
-def client():
-    """Create a test client for the FastAPI app with startup/shutdown lifecycle."""
-    with TestClient(app) as client:
-        yield client
+def _upload_test_dataset(client, ste_csv, contracts_csv) -> None:
+    response = client.post(
+        "/datasets/upload",
+        data={"mode": "replace_all"},
+        files={
+            "ste_file": ("ste.csv", ste_csv, "text/csv"),
+            "contracts_file": ("contracts.csv", contracts_csv, "text/csv"),
+        },
+    )
+    assert response.status_code == 200
+    job = wait_for_job(client, response.json()["jobId"])
+    assert job["status"] == "successful"
 
 
-# ============================================================================
-# Health Check Tests
-# ============================================================================
-
-class TestHealth:
-    """Tests for health check endpoint."""
-
-    def test_health_endpoint_exists(self, client):
-        """Test that health endpoint returns 200."""
-        response = client.get("/health")
-        assert response.status_code == 200
-
-    def test_health_response_schema(self, client):
-        """Test that health response has correct schema."""
-        response = client.get("/health")
-        data = response.json()
-        
-        assert "status" in data
-        assert "version" in data
-        assert data["status"] == "healthy"
-
-    def test_health_returns_version(self, client):
-        """Test that health endpoint returns API version."""
-        response = client.get("/health")
-        data = response.json()
-        
-        assert data["version"] is not None
-        assert isinstance(data["version"], str)
+def test_health_endpoint(client):
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "healthy"
 
 
-# ============================================================================
-# Search Endpoint Tests
-# ============================================================================
+def test_replace_all_upload_and_summary(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
 
-class TestSearchEndpoint:
-    """Tests for search endpoint contract."""
-
-    def test_search_endpoint_exists(self, client):
-        """Test that search endpoint accepts POST requests."""
-        response = client.post(
-            "/search",
-            json={
-                "query": "laptop",
-                "limit": 20,
-                "offset": 0
-            }
-        )
-        assert response.status_code == 200
-
-    def test_search_response_schema(self, client):
-        """Test that search response has correct schema."""
-        response = client.post(
-            "/search",
-            json={
-                "query": "laptop",
-                "limit": 10,
-                "offset": 0
-            }
-        )
-        data = response.json()
-        
-        # Check required fields
-        assert "results" in data
-        assert "total_count" in data
-        assert "query" in data
-        assert "limit" in data
-        assert "offset" in data
-        
-        # Check types
-        assert isinstance(data["results"], list)
-        assert isinstance(data["total_count"], int)
-        assert isinstance(data["query"], str)
-        assert isinstance(data["limit"], int)
-        assert isinstance(data["offset"], int)
-
-    def test_search_with_minimal_query(self, client):
-        """Test search with minimal required fields."""
-        response = client.post(
-            "/search",
-            json={"query": "test"}
-        )
-        assert response.status_code == 200
-        data = response.json()
-        assert "results" in data
-        assert "total_count" in data
-
-    def test_search_respects_pagination_params(self, client):
-        """Test that search returns requested pagination parameters."""
-        response = client.post(
-            "/search",
-            json={
-                "query": "laptop",
-                "limit": 50,
-                "offset": 100
-            }
-        )
-        data = response.json()
-        assert data["limit"] == 50
-        assert data["offset"] == 100
-
-    def test_search_with_user_id(self, client):
-        """Test search with optional user_id for personalization."""
-        response = client.post(
-            "/search",
-            json={
-                "query": "laptop",
-                "user_id": "user_123"
-            }
-        )
-        assert response.status_code == 200
-
-    def test_search_with_real_data(self, client):
-        """Test search returns real product data."""
-        response = client.post(
-            "/search",
-            json={
-                "query": "ноутбук",  # Search for "laptop" in Russian
-                "limit": 10,
-                "offset": 0
-            }
-        )
-        data = response.json()
-        
-        # Should find products from sample data
-        assert data["total_count"] >= 0
-        if data["total_count"] > 0:
-            # Check first result structure
-            result = data["results"][0]
-            assert "product" in result
-            assert "relevance_score" in result
-            assert "match_reasons" in result
-            
-            product = result["product"]
-            assert "id" in product
-            assert "title" in product
-            assert "manufacturer" in product
-
-    def test_search_by_manufacturer(self, client):
-        """Test search by manufacturer name."""
-        response = client.post(
-            "/search",
-            json={"query": "hp"}
-        )
-        data = response.json()
-        
-        # Should find HP products
-        assert data["total_count"] >= 0
-
-    def test_search_empty_results(self, client):
-        """Test search with query that should return no results."""
-        response = client.post(
-            "/search",
-            json={"query": "nonexistentproduct12345"}
-        )
-        data = response.json()
-        
-        assert data["total_count"] == 0
-        assert len(data["results"]) == 0
+    summary = client.get("/datasets/summary")
+    payload = summary.json()
+    assert payload["counts"]["products"] == 4
+    assert payload["counts"]["contracts"] == 4
+    assert payload["counts"]["profiles"] >= 3
 
 
-# ============================================================================
-# Product Details Endpoint Tests
-# ============================================================================
+def test_search_returns_personalized_results_after_upload(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
 
-class TestProductDetails:
-    """Tests for product details endpoint contract."""
+    baseline = client.post(
+        "/search",
+        json={"query": "thinkpad lenovo", "limit": 10, "offset": 0},
+    )
+    personalized = client.post(
+        "/search",
+        json={
+            "query": "thinkpad lenovo",
+            "customerId": "7700000001",
+            "sessionId": "session-1",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
 
-    def test_get_product_exists(self, client):
-        """Test that get product endpoint exists."""
-        response = client.get("/products/prod_001")
-        assert response.status_code == 200
-
-    def test_get_product_response_schema(self, client):
-        """Test that product response has correct schema."""
-        # Get first product from sample data
-        search_response = client.post("/search", json={"query": "ноутбук", "limit": 1})
-        if search_response.json()["total_count"] > 0:
-            product_id = search_response.json()["results"][0]["product"]["id"]
-            
-            response = client.get(f"/products/{product_id}")
-            data = response.json()
-            
-            # Check required fields
-            required_fields = [
-                "id", "title", "manufacturer", "model",
-                "category_id", "category_name", "image_url",
-                "country_origin", "attributes", "created_at"
-            ]
-            for field in required_fields:
-                assert field in data, f"Missing field: {field}"
-        else:
-            # If no products, test with hardcoded ID that should fail
-            response = client.get("/products/prod_001")
-            assert response.status_code == 404
-
-    def test_get_product_not_found(self, client):
-        """Test getting non-existent product."""
-        response = client.get("/products/nonexistent_id")
-        assert response.status_code == 404
+    assert baseline.status_code == 200
+    assert personalized.status_code == 200
+    assert personalized.json()["results"][0]["product"]["id"] == "3001"
+    assert personalized.json()["profileSummary"]["customerId"] == "7700000001"
+    assert personalized.json()["results"][0]["score"] >= baseline.json()["results"][0]["score"]
+    assert personalized.json()["results"][0]["scoreBreakdown"]
 
 
-# ============================================================================
-# Saved Results Endpoint Tests
-# ============================================================================
+def test_search_handles_keyboard_layout_and_reports_interpretation(
+    client, ste_csv, contracts_csv
+):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
 
-class TestSavedResults:
-    """Tests for saved results endpoint contract."""
-
-    def test_post_save_result_exists(self, client):
-        """Test that save result endpoint exists."""
-        response = client.post(
-            "/saved-results",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001"
-            }
-        )
-        assert response.status_code == 200
-
-    def test_post_save_result_response_schema(self, client):
-        """Test that save result response has correct schema."""
-        response = client.post(
-            "/saved-results",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001"
-            }
-        )
-        data = response.json()
-        
-        assert "success" in data
-        assert isinstance(data["success"], bool)
-
-    def test_get_saved_results_exists(self, client):
-        """Test that get saved results endpoint exists."""
-        response = client.get("/saved-results?user_id=user_123")
-        assert response.status_code == 200
-
-    def test_get_saved_results_response_schema(self, client):
-        """Test that get saved results response has correct schema."""
-        response = client.get("/saved-results?user_id=user_123")
-        data = response.json()
-        
-        assert "results" in data
-        assert "total_count" in data
-        assert isinstance(data["results"], list)
-        assert isinstance(data["total_count"], int)
+    response = client.post(
+        "/search",
+        json={
+            "query": "aktirf smartbuy 16",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["product"]["id"] == "1001"
+    assert payload["correctedQuery"].startswith("флешка")
+    assert any(item["from"] == "aktirf" for item in payload["queryInterpretation"]["layoutCorrections"])
+    assert "usb" in payload["searchTermsUsed"]
+    assert payload["queryInterpretation"]["synonymMappings"]
 
 
-# ============================================================================
-# Feedback Endpoint Tests
-# ============================================================================
+def test_search_handles_typos_and_synonyms(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
 
-class TestFeedback:
-    """Tests for feedback endpoint contract."""
+    response = client.post(
+        "/search",
+        json={
+            "query": "флешка smartbu 16",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["product"]["id"] == "1001"
+    assert payload["correctedQuery"].split()[1] == "smartbuy"
+    assert any(item["to"] == "smartbuy" for item in payload["queryInterpretation"]["typoCorrections"])
+    assert any(item["to"] == "usb" for item in payload["queryInterpretation"]["synonymMappings"])
 
-    def test_feedback_endpoint_exists(self, client):
-        """Test that feedback endpoint exists."""
-        response = client.post(
-            "/feedback",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001"
-            }
-        )
-        assert response.status_code == 200
 
-    def test_feedback_response_schema(self, client):
-        """Test that feedback response has correct schema."""
-        response = client.post(
-            "/feedback",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "rating": 5,
-                "is_relevant": True
-            }
-        )
-        data = response.json()
-        
-        assert "success" in data
-        assert isinstance(data["success"], bool)
+def test_duplicate_ste_rows_do_not_create_duplicate_search_results(
+    client, ste_csv, contracts_csv
+):
+    duplicate_row = (
+        "1001;Флеш-накопитель SMARTBUY Glossy USB 2.0 черный 16 Гб;USB-накопители;"
+        "\"Объем накопителя:16.00000;Цвет:черный;Интерфейс подключения:USB 2\"\n"
+    ).encode("utf-8")
+    _upload_test_dataset(client, ste_csv + duplicate_row, contracts_csv)
 
-    def test_feedback_with_rating(self, client):
-        """Test feedback with rating."""
-        response = client.post(
-            "/feedback",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "rating": 4
-            }
-        )
-        assert response.status_code == 200
+    response = client.post(
+        "/search",
+        json={
+            "query": "smartbuy usb 16",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    ids = [item["product"]["id"] for item in response.json()["results"]]
+    assert len(ids) == len(set(ids))
 
-    def test_feedback_with_comment(self, client):
-        """Test feedback with comment."""
-        response = client.post(
-            "/feedback",
-            json={
-                "user_id": "user_123",
-                "product_id": "prod_001",
-                "comment": "Great product!"
-            }
-        )
-        assert response.status_code == 200
+
+def test_dynamic_events_change_follow_up_ranking(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
+
+    session_id = "session-dynamic"
+    initial = client.post(
+        "/search",
+        json={
+            "query": "smartbuy usb 16",
+            "customerId": "7700000001",
+            "sessionId": session_id,
+            "includeDebug": True,
+        },
+    ).json()
+    top_before = initial["results"][0]["product"]["id"]
+
+    event = client.post(
+        "/events",
+        json={
+            "sessionId": session_id,
+            "customerId": "7700000001",
+            "eventType": "marked_irrelevant",
+            "productId": top_before,
+            "query": "smartbuy usb 16",
+            "position": 1,
+        },
+    )
+    assert event.status_code == 200
+
+    after = client.post(
+        "/search",
+        json={
+            "query": "smartbuy usb 16",
+            "customerId": "7700000001",
+            "sessionId": session_id,
+            "includeDebug": True,
+        },
+    ).json()
+    assert (
+        after["results"][0]["product"]["id"] != top_before
+        or after["results"][0]["score"] <= initial["results"][0]["score"]
+    )
+
+
+def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
+
+    profiles = client.get("/profiles/demo")
+    assert profiles.status_code == 200
+    assert len(profiles.json()) >= 1
+
+    metrics = client.get("/metrics/summary")
+    assert metrics.status_code == 200
+    payload = metrics.json()
+    assert "baseline" in payload
+    assert "personalized" in payload
+
+
+def test_bootstrap_default_dataset_and_clear_endpoint(
+    client, ste_csv, contracts_csv, tmp_path, monkeypatch
+):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    (data_dir / "catalog.csv").write_bytes(ste_csv)
+    (data_dir / "contracts.csv").write_bytes(contracts_csv)
+    monkeypatch.setattr(settings, "PROJECT_ROOT", tmp_path)
+
+    bootstrap = client.post("/datasets/bootstrap-default")
+    assert bootstrap.status_code == 200
+    job_id = bootstrap.json()["jobId"]
+    job = wait_for_job(client, job_id)
+    assert job["status"] == "successful"
+
+    summary = client.get("/datasets/summary")
+    assert summary.status_code == 200
+    assert summary.json()["counts"]["products"] == 4
+
+    cleared = client.post("/datasets/clear")
+    assert cleared.status_code == 200
+    assert cleared.json()["success"] is True
+
+    after_clear = client.get("/datasets/summary")
+    payload = after_clear.json()
+    assert payload["counts"]["products"] == 0
+    assert payload["counts"]["contracts"] == 0
+    assert payload["imports"] == []
