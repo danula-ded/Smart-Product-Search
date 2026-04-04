@@ -57,6 +57,7 @@ export function HomePage() {
               <AppCardContent className="space-y-4">
                 <SearchToolbar
                   query={model.query}
+                  isFeedMode={model.isFeedMode}
                   selectedCustomer={model.selectedCustomer}
                   profiles={model.profiles}
                   hasDataset={model.hasDataset}
@@ -88,21 +89,23 @@ export function HomePage() {
             ) : (
               <div
                 id="search-workspace"
-                className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]"
+                className={model.isFeedMode ? 'grid gap-6' : 'grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]'}
               >
-                <CatalogFilters
-                  activeFilterCount={model.activeFilterCount}
-                  filters={model.filters}
-                  categoryFacets={model.categoryFacets}
-                  brandFacets={model.brandFacets}
-                  attributeFacets={model.attributeFacets}
-                  profileSummary={model.profileSummary}
-                  onFilterToggle={model.handleFilterToggle}
-                  onClearAll={model.clearAllFilters}
-                />
-
+                {!model.isFeedMode ? (
+                  <CatalogFilters
+                    activeFilterCount={model.activeFilterCount}
+                    filters={model.filters}
+                    categoryFacets={model.categoryFacets}
+                    brandFacets={model.brandFacets}
+                    attributeFacets={model.attributeFacets}
+                    profileSummary={model.profileSummary}
+                    onFilterToggle={model.handleFilterToggle}
+                    onClearAll={model.clearAllFilters}
+                  />
+                ) : null}
                 <ProductListSection
                   searchState={model.searchState}
+                  isFeedMode={model.isFeedMode}
                   searching={model.searching}
                   currentPage={model.currentPage}
                   totalPages={model.totalPages}

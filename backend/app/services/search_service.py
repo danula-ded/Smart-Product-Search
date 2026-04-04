@@ -89,6 +89,7 @@ class SearchService:
 
     def __init__(self, db: SQLiteDatabase) -> None:
         self.db = db
+        self._popular_recommendation_rows: list[dict[str, Any]] = []
 
     def search(
         self,
@@ -223,6 +224,7 @@ class SearchService:
         track_event: bool = True,
     ) -> dict[str, Any]:
         started_at = perf_counter()
+        effective_customer_id = None if customer_id == NEW_CUSTOMER_ID else customer_id
 
         retrieval_started_at = perf_counter()
         candidate_pool = max(
@@ -230,10 +232,13 @@ class SearchService:
             offset + limit + 60,
             (offset + limit) * 4,
         )
-        candidates = self._retrieve_recommendation_candidates(customer_id, candidate_pool)
+        candidates = self._retrieve_recommendation_candidates(
+            effective_customer_id,
+            candidate_pool,
+        )
         retrieval_ms = int((perf_counter() - retrieval_started_at) * 1000)
 
-        overlay = self._load_personalization_overlay(customer_id, session_id)
+        overlay = self._load_personalization_overlay(effective_customer_id, session_id)
 
         rerank_started_at = perf_counter()
         ranked = [
@@ -246,7 +251,7 @@ class SearchService:
         ]
         ranked = [item for item in ranked if item["score"] > 0]
         ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
-        ranked = self._blend_recommendation_feed(ranked, customer_id)
+        ranked = self._blend_recommendation_feed(ranked, effective_customer_id)
         rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
 
         if track_event and session_id:
@@ -772,22 +777,7 @@ class SearchService:
                     entry["popularity"] = max(entry["popularity"], int(row["popularity"] or 0))
 
         if len(candidate_rows) < candidate_limit:
-            popular_rows = self.db.query_all(
-                """
-                SELECT
-                    p.*,
-                    0.0 AS history_weight,
-                    0.0 AS category_weight,
-                    COUNT(c.contract_key) AS popularity
-                FROM contracts c
-                JOIN products p ON p.ste_id = c.ste_id
-                WHERE c.matched_product = 1
-                GROUP BY p.ste_id
-                ORDER BY popularity DESC, p.updated_at DESC
-                LIMIT ?
-                """,
-                [candidate_limit],
-            )
+            popular_rows = self._load_popular_recommendation_rows(candidate_limit)
             self._merge_recommendation_rows(candidate_rows, popular_rows)
 
         ranked_entries = sorted(
@@ -810,6 +800,36 @@ class SearchService:
                 has_direct_history=float(entry.get("historyWeight", 0.0)) > 0,
             )
         return selected_entries
+
+    def _load_popular_recommendation_rows(self, limit: int) -> list[dict[str, Any]]:
+        if len(self._popular_recommendation_rows) >= limit:
+            return self._popular_recommendation_rows[:limit]
+
+        query_limit = max(limit, 240)
+        rows = self.db.query_all(
+            """
+            SELECT
+                p.*,
+                0.0 AS history_weight,
+                0.0 AS category_weight,
+                pop.popularity AS popularity
+            FROM (
+                SELECT
+                    ste_id,
+                    COUNT(contract_key) AS popularity
+                FROM contracts
+                WHERE matched_product = 1
+                GROUP BY ste_id
+                ORDER BY popularity DESC
+                LIMIT ?
+            ) pop
+            JOIN products p ON p.ste_id = pop.ste_id
+            ORDER BY pop.popularity DESC, p.updated_at DESC
+            """,
+            [query_limit],
+        )
+        self._popular_recommendation_rows = [dict(row) for row in rows]
+        return self._popular_recommendation_rows[:limit]
 
     def _merge_recommendation_rows(
         self,

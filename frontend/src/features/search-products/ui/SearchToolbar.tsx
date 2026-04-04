@@ -1,11 +1,11 @@
 import { RefreshCcw, Search } from 'lucide-react'
 
 import type { DemoProfile } from '@/shared/api'
-import { Checkbox, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui'
-import { AppButton, AppInput, Loader } from '@/shared/ui'
+import { AppButton, AppInput, Checkbox, Loader, Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui'
 
 type SearchToolbarProps = {
   query: string
+  isFeedMode: boolean
   selectedCustomer: string
   profiles: DemoProfile[]
   hasDataset: boolean
@@ -21,6 +21,7 @@ type SearchToolbarProps = {
 
 export function SearchToolbar({
   query,
+  isFeedMode,
   selectedCustomer,
   profiles,
   hasDataset,
@@ -46,12 +47,14 @@ export function SearchToolbar({
               onSearch()
             }
           }}
-          placeholder="Например: aktirf smartbuy 16"
+          placeholder="Оставьте поле пустым для персональной витрины или введите запрос"
           startIcon={<Search className="size-4" />}
         />
 
         <div className="grid gap-2">
-          <span className="text-sm font-medium text-[var(--semantic-text-primary)]">Профиль заказчика</span>
+          <span className="text-sm font-medium text-[var(--semantic-text-primary)]">
+            Профиль заказчика
+          </span>
           <Select value={selectedCustomer} onValueChange={onProfileChange}>
             <SelectTrigger className="w-full">
               <SelectValue placeholder="Выберите профиль" />
@@ -73,13 +76,9 @@ export function SearchToolbar({
         </div>
 
         <div className="flex flex-col justify-end gap-2">
-          <AppButton
-            stretch
-            disabled={!hasDataset || searching || query.trim().length === 0}
-            onClick={onSearch}
-          >
-            {searching ? <Loader label="Ищем" sizeClassName="size-4" /> : <Search className="size-4" />}
-            {!searching ? 'Искать' : null}
+          <AppButton stretch disabled={!hasDataset || searching} onClick={onSearch}>
+            {searching ? <Loader label={isFeedMode ? 'Собираем витрину' : 'Ищем'} sizeClassName="size-4" /> : <Search className="size-4" />}
+            {!searching ? (isFeedMode ? 'Подобрать' : 'Искать') : null}
           </AppButton>
           <AppButton variant="outline" stretch onClick={onNewSession}>
             <RefreshCcw className="size-4" />

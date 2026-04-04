@@ -2,13 +2,13 @@ import type { SearchResult } from '@/entities/product'
 import type { SearchResponse } from '@/shared/api'
 import { FeedbackLegend } from '@/features/search-products'
 import { SearchPagination } from '@/features/search-pagination'
-import { EmptyState } from '@/shared/ui'
-import { AppBadge } from '@/shared/ui'
 import { formatNumber } from '@/shared/lib/format'
+import { AppBadge, EmptyState } from '@/shared/ui'
 import { ProductGrid } from '@/widgets/ProductGrid'
 
 type ProductListSectionProps = {
   searchState: SearchResponse | null
+  isFeedMode: boolean
   searching: boolean
   currentPage: number
   totalPages: number
@@ -24,6 +24,7 @@ type ProductListSectionProps = {
 
 export function ProductListSection({
   searchState,
+  isFeedMode,
   searching,
   currentPage,
   totalPages,
@@ -36,23 +37,31 @@ export function ProductListSection({
   onSave,
   onDetails,
 }: ProductListSectionProps) {
+  const title = isFeedMode ? 'Персональная витрина' : 'Выдача'
+  const subtitle = searchState
+    ? `${formatNumber(searchState.totalCount)} результатов, страница ${formatNumber(currentPage)} из ${formatNumber(totalPages)}`
+    : isFeedMode
+      ? 'Оставьте поле запроса пустым, чтобы увидеть базовую подборку для выбранного профиля.'
+      : 'Введите запрос, чтобы получить персонализированную выдачу.'
+
+  const emptyTitle = isFeedMode ? 'Витрина пока пуста' : 'Ничего не найдено'
+  const emptyDescription = isFeedMode
+    ? 'Попробуйте выбрать другой профиль или загрузить данные на вкладке «Данные».'
+    : 'Попробуйте убрать часть фильтров или изменить запрос.'
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-lg font-semibold text-[var(--semantic-text-primary)]">Выдача</div>
-          <div className="text-sm text-[var(--semantic-text-secondary)]">
-            {searchState
-              ? `${formatNumber(searchState.totalCount)} результатов, страница ${formatNumber(currentPage)} из ${formatNumber(totalPages)}`
-              : 'Сначала выполни поиск.'}
-          </div>
+          <div className="text-lg font-semibold text-[var(--semantic-text-primary)]">{title}</div>
+          <div className="text-sm text-[var(--semantic-text-secondary)]">{subtitle}</div>
         </div>
         {searchState ? (
           <div className="flex flex-wrap gap-2">
             <AppBadge tone="outline">Нормализация {searchState.timingsMs.normalize} ms</AppBadge>
             <AppBadge tone="outline">Поиск {searchState.timingsMs.retrieve} ms</AppBadge>
             <AppBadge tone="outline">Переранжирование {searchState.timingsMs.rerank} ms</AppBadge>
-            <AppBadge>Всего {searchState.timingsMs.total} ms</AppBadge>
+            <AppBadge>{isFeedMode ? 'Подборка' : 'Всего'} {searchState.timingsMs.total} ms</AppBadge>
           </div>
         ) : null}
       </div>
@@ -97,10 +106,7 @@ export function ProductListSection({
       ) : null}
 
       {searchState && searchState.results.length === 0 ? (
-        <EmptyState
-          title="Ничего не найдено"
-          description="Попробуй убрать часть фильтров или изменить запрос."
-        />
+        <EmptyState title={emptyTitle} description={emptyDescription} />
       ) : null}
     </div>
   )

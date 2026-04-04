@@ -120,6 +120,12 @@ class SQLiteDatabase:
             )
             cursor.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_contracts_matched_product_ste_id
+                ON contracts (matched_product, ste_id)
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS customer_profiles (
                     customer_inn TEXT PRIMARY KEY,
                     customer_name TEXT NOT NULL,

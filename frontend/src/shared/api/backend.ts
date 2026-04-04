@@ -152,6 +152,14 @@ export type SearchPayload = {
   filters?: SearchFilters;
 };
 
+export type RecommendationPayload = {
+  customerId?: string | null;
+  sessionId?: string | null;
+  limit?: number;
+  offset?: number;
+  includeDebug?: boolean;
+};
+
 export type EventPayload = {
   eventType: string;
   productId?: string | null;
@@ -230,6 +238,16 @@ export async function clearDataset() {
 export async function searchProducts(payload: SearchPayload) {
   return parseResponse<SearchResponse>(
     await fetch('/search', {
+      method: 'POST',
+      headers: jsonHeaders,
+      body: JSON.stringify(payload),
+    }),
+  );
+}
+
+export async function getRecommendations(payload: RecommendationPayload) {
+  return parseResponse<SearchResponse>(
+    await fetch('/search/recommendations', {
       method: 'POST',
       headers: jsonHeaders,
       body: JSON.stringify(payload),
