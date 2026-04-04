@@ -1,0 +1,16 @@
+services:
+  smart-product-search:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-product-search
+    ports:
+      - "8000:8000"
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8000
+      DEBUG: "false"
+    volumes:
+      - ./backend/runtime:/app/backend/runtime
+      - ./data:/app/data:ro
+    restart: unless-stopped

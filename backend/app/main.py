@@ -9,13 +9,20 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.staticfiles import StaticFiles
-from pydantic.warnings import UnsupportedFieldAttributeWarning
 
 from app.api import router
 from app.config import settings
 from app.services import RuntimeServices, build_runtime
 
-warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+try:  # pragma: no cover
+    from pydantic.warnings import UnsupportedFieldAttributeWarning
+except ImportError:  # pragma: no cover
+    UnsupportedFieldAttributeWarning = None
+
+if UnsupportedFieldAttributeWarning is not None:
+    warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
+else:  # pragma: no cover
+    warnings.filterwarnings("ignore", message=".*FieldAttributeWarning.*")
 
 
 def initialize_app_state(app: FastAPI) -> RuntimeServices:
