@@ -203,6 +203,7 @@ def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
     profiles = client.get("/profiles/demo")
     assert profiles.status_code == 200
     assert len(profiles.json()) >= 1
+    assert any(profile["customerId"] == "__new_customer__" for profile in profiles.json())
 
     metrics = client.get("/metrics/summary")
     assert metrics.status_code == 200
@@ -213,6 +214,27 @@ def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
     assert "ndcgAt10" in payload["baseline"]
     assert "mrr10" in payload["personalized"]
     assert "mrrAt10" in payload["personalized"]
+
+
+def test_cold_start_profile_returns_popular_recommendations(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
+
+    response = client.post(
+        "/search/recommendations",
+        json={
+            "customerId": "__new_customer__",
+            "sessionId": "feed-cold-start",
+            "limit": 6,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["parserSource"] == "cold_start_feed"
+    assert payload["profileSummary"]["customerId"] == "__new_customer__"
+    assert payload["profileSummary"]["purchaseCount"] == 0
+    assert len(payload["results"]) > 0
 
 
 def test_bootstrap_default_dataset_and_clear_endpoint(

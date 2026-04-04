@@ -54,6 +54,19 @@ FACTOR_TITLES = {
 }
 
 FTS_TERM_RE = re.compile(r"[a-z\u0400-\u04ff0-9]+", re.IGNORECASE)
+NEW_CUSTOMER_ID = "__new_customer__"
+NEW_CUSTOMER_PROFILE = {
+    "customerId": NEW_CUSTOMER_ID,
+    "label": "Новый заказчик",
+    "summary": {
+        "customerName": "Новый заказчик без истории закупок",
+        "purchaseCount": 0,
+        "matchedPurchaseCount": 0,
+        "topCategories": [],
+        "topProducts": [],
+        "mode": "cold_start",
+    },
+}
 
 
 @dataclass
@@ -247,7 +260,10 @@ class SearchService:
                 dwell_ms=None,
             )
 
-        parser_source = "personalized_feed" if customer_id else "popular_feed"
+        if customer_id == NEW_CUSTOMER_ID:
+            parser_source = "cold_start_feed"
+        else:
+            parser_source = "personalized_feed" if customer_id else "popular_feed"
 
         return {
             "query": "",
@@ -365,7 +381,7 @@ class SearchService:
 
     def list_demo_profiles(self) -> list[dict[str, Any]]:
         rows = self.db.query_all("SELECT * FROM demo_profiles ORDER BY sort_order ASC")
-        return [
+        profiles = [
             {
                 "customerId": row["customer_inn"],
                 "label": row["label"],
@@ -373,10 +389,23 @@ class SearchService:
             }
             for row in rows
         ]
+        profiles.append(NEW_CUSTOMER_PROFILE)
+        return profiles
 
     def get_profile_summary(self, customer_id: str | None) -> dict[str, Any] | None:
         if not customer_id:
             return None
+        if customer_id == NEW_CUSTOMER_ID:
+            return {
+                "customerId": NEW_CUSTOMER_ID,
+                "customerName": "Новый заказчик без истории закупок",
+                "purchaseCount": 0,
+                "matchedPurchaseCount": 0,
+                "totalSpend": 0.0,
+                "lastPurchaseAt": None,
+                "topCategories": [],
+                "topProducts": [],
+            }
 
         row = self.db.query_one(
             "SELECT * FROM customer_profiles WHERE customer_inn = ?",
