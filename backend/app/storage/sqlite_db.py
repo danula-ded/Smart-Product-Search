@@ -49,6 +49,12 @@ class SQLiteDatabase:
             )
             cursor.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_products_category_norm
+                ON products (category_norm)
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS product_attributes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     ste_id TEXT NOT NULL,

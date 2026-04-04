@@ -21,6 +21,7 @@ from app.schemas import (
     SavedResultRequestSchema,
     SavedResultResponseSchema,
     SavedResultsListResponseSchema,
+    RecommendationRequestSchema,
     SearchAnalysisResponseSchema,
     SearchRequestSchema,
     SearchResponseSchema,
@@ -119,6 +120,25 @@ async def search_products(
         offset=payload.offset,
         include_debug=payload.include_debug,
         filters=payload.filters or {},
+    )
+    return SearchResponseSchema(**response)
+
+
+@router.post(
+    "/search/recommendations",
+    response_model=SearchResponseSchema,
+    tags=["Search"],
+)
+async def personalized_recommendations(
+    request: Request, payload: RecommendationRequestSchema = Body(...)
+) -> SearchResponseSchema:
+    runtime = get_runtime(request)
+    response = runtime.search.recommendations(
+        customer_id=payload.customer_id,
+        session_id=payload.session_id,
+        limit=payload.limit,
+        offset=payload.offset,
+        include_debug=payload.include_debug,
     )
     return SearchResponseSchema(**response)
 
