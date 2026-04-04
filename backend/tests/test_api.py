@@ -209,6 +209,10 @@ def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
     payload = metrics.json()
     assert "baseline" in payload
     assert "personalized" in payload
+    assert "ndcg10" in payload["baseline"]
+    assert "ndcgAt10" in payload["baseline"]
+    assert "mrr10" in payload["personalized"]
+    assert "mrrAt10" in payload["personalized"]
 
 
 def test_bootstrap_default_dataset_and_clear_endpoint(

@@ -41,9 +41,10 @@ class MetricsService:
             return self._cache_payload
         persisted = self._load_persisted_cache(signature)
         if persisted is not None:
+            normalized = self._with_compat_metric_keys(persisted)
             self._cache_signature = signature
-            self._cache_payload = persisted
-            return persisted
+            self._cache_payload = normalized
+            return normalized
 
         demo_profiles = self.search_service.list_demo_profiles()
         rows = self.db.query_all(
@@ -110,6 +111,7 @@ class MetricsService:
             "baseline": self._finalize_metrics(baseline_scores),
             "personalized": self._finalize_metrics(personalized_scores),
         }
+        payload = self._with_compat_metric_keys(payload)
         self._cache_signature = signature
         self._cache_payload = payload
         self._persist_cache(signature, payload)
@@ -187,3 +189,25 @@ class MetricsService:
                 mean(bucket["success5"]) if bucket["success5"] else 0.0, 4
             ),
         }
+
+    def _with_compat_metric_keys(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Expose both compact and UI-friendly metric names."""
+        normalized = dict(payload)
+        for section_name in ("baseline", "personalized"):
+            section = dict(normalized.get(section_name, {}))
+            if not section:
+                normalized[section_name] = section
+                continue
+            key_pairs = {
+                "ndcg10": "ndcgAt10",
+                "mrr10": "mrrAt10",
+                "recall20": "recallAt20",
+                "success5": "successAt5",
+            }
+            for compact_key, compat_key in key_pairs.items():
+                if compact_key in section and compat_key not in section:
+                    section[compat_key] = section[compact_key]
+                elif compat_key in section and compact_key not in section:
+                    section[compact_key] = section[compat_key]
+            normalized[section_name] = section
+        return normalized
