@@ -30,6 +30,7 @@ import {
   getHealth,
   getJob,
   getMetrics,
+  getRecommendations,
   searchProducts,
   sendEvent,
   uploadDatasets,
@@ -136,6 +137,40 @@ const ACTION_DETAILS = {
 
 function createSessionId() {
   return `session-${Math.random().toString(36).slice(2, 10)}`
+}
+
+const STORAGE_KEYS = {
+  customerId: 'smart-search.customerId',
+  sessionId: 'smart-search.sessionId',
+  pageSize: 'smart-search.pageSize',
+  includeDebug: 'smart-search.includeDebug',
+} as const
+
+function readStoredString(key: string, fallback: string) {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+  const value = window.localStorage.getItem(key)
+  return value && value.trim().length > 0 ? value : fallback
+}
+
+function readStoredNumber(key: string, fallback: number) {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+  const value = Number(window.localStorage.getItem(key))
+  return Number.isFinite(value) && value > 0 ? value : fallback
+}
+
+function readStoredBoolean(key: string, fallback: boolean) {
+  if (typeof window === 'undefined') {
+    return fallback
+  }
+  const value = window.localStorage.getItem(key)
+  if (value == null) {
+    return fallback
+  }
+  return value === 'true'
 }
 
 function formatNumber(value: number | null | undefined) {
@@ -621,12 +656,20 @@ function App() {
   const [jobState, setJobState] = useState<DatasetJob | null>(null)
   const [datasetBusy, setDatasetBusy] = useState(false)
 
-  const [query, setQuery] = useState('aktirf smartbuy 16')
-  const [selectedCustomer, setSelectedCustomer] = useState('')
-  const [sessionId, setSessionId] = useState(createSessionId())
-  const [includeDebug, setIncludeDebug] = useState(true)
+  const [query, setQuery] = useState('')
+  const [selectedCustomer, setSelectedCustomer] = useState(() =>
+    readStoredString(STORAGE_KEYS.customerId, ''),
+  )
+  const [sessionId, setSessionId] = useState(() =>
+    readStoredString(STORAGE_KEYS.sessionId, createSessionId()),
+  )
+  const [includeDebug, setIncludeDebug] = useState(() =>
+    readStoredBoolean(STORAGE_KEYS.includeDebug, true),
+  )
   const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0])
+  const [pageSize, setPageSize] = useState(() =>
+    readStoredNumber(STORAGE_KEYS.pageSize, PAGE_SIZE_OPTIONS[0]),
+  )
   const [filters, setFilters] = useState<SearchFilters>({})
   const [searchState, setSearchState] = useState<SearchResponse | null>(null)
   const [previousSearchState, setPreviousSearchState] = useState<SearchResponse | null>(null)
@@ -682,6 +725,22 @@ function App() {
   }, [])
 
   useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.customerId, selectedCustomer)
+  }, [selectedCustomer])
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.sessionId, sessionId)
+  }, [sessionId])
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.pageSize, String(pageSize))
+  }, [pageSize])
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEYS.includeDebug, String(includeDebug))
+  }, [includeDebug])
+
+  useEffect(() => {
     if (!deferredQuery) {
       setAnalysis(null)
       return
@@ -717,6 +776,19 @@ function App() {
       void refreshMetrics()
     }
   }, [activeTab, metrics, metricsLoading])
+
+  useEffect(() => {
+    if (activeTab !== 'search' || !hasDataset || searching) {
+      return
+    }
+    if (query.trim().length > 0) {
+      return
+    }
+    if (!selectedCustomer && profiles.length > 0) {
+      return
+    }
+    void loadRecommendations({ capturePrevious: false, targetTab: 'search' })
+  }, [activeTab, hasDataset, selectedCustomer, query])
 
   async function refreshAll() {
     setLoadingData(true)
@@ -787,6 +859,66 @@ function App() {
     throw new Error('Обработка заняла слишком много времени.')
   }
 
+  async function loadRecommendations(options?: {
+    capturePrevious?: boolean
+    nextCustomerId?: string
+    nextSessionId?: string
+    nextPage?: number
+    nextPageSize?: number
+    targetTab?: TabId
+  }) {
+    const customerId = options?.nextCustomerId ?? (selectedCustomer || null)
+    const currentSession = options?.nextSessionId ?? sessionId
+    const requestedPageSize = options?.nextPageSize ?? pageSize
+    const requestedPage = Math.max(1, options?.nextPage ?? page)
+    const requestedOffset = (requestedPage - 1) * requestedPageSize
+
+    setSearching(true)
+    setError(null)
+
+    try {
+      let payload = await getRecommendations({
+        customerId,
+        sessionId: currentSession,
+        limit: requestedPageSize,
+        offset: requestedOffset,
+        includeDebug,
+      })
+
+      let resolvedPage = requestedPage
+      const maxPage = Math.max(1, Math.ceil(Math.max(payload.totalCount, 1) / requestedPageSize))
+      if (payload.totalCount > 0 && requestedPage > maxPage) {
+        resolvedPage = maxPage
+        payload = await getRecommendations({
+          customerId,
+          sessionId: currentSession,
+          limit: requestedPageSize,
+          offset: (resolvedPage - 1) * requestedPageSize,
+          includeDebug,
+        })
+      }
+
+      if (options?.capturePrevious && searchState) {
+        setPreviousSearchState(searchState)
+      }
+      if (countActiveFilters(filters) > 0) {
+        setFilters({})
+      }
+      setSearchState(payload)
+      setPage(resolvedPage)
+      setPageSize(requestedPageSize)
+      setActiveTab(options?.targetTab ?? 'search')
+    } catch (caught) {
+      setError(
+        caught instanceof Error
+          ? caught.message
+          : 'РќРµ СѓРґР°Р»РѕСЃСЊ РїРѕСЃС‚СЂРѕРёС‚СЊ Р±Р°Р·РѕРІСѓСЋ РїРµСЂСЃРѕРЅР°Р»РёР·РёСЂРѕРІР°РЅРЅСѓСЋ РїРѕРґР±РѕСЂРєСѓ.',
+      )
+    } finally {
+      setSearching(false)
+    }
+  }
+
   async function executeSearch(options?: {
     capturePrevious?: boolean
     nextCustomerId?: string
@@ -798,7 +930,7 @@ function App() {
   }) {
     const normalizedQuery = query.trim()
     if (!normalizedQuery) {
-      setError('Введите поисковый запрос хотя бы из одного символа.')
+      await loadRecommendations(options)
       return
     }
 
@@ -919,10 +1051,7 @@ function App() {
     openDialog = false,
   ) {
     const normalizedQuery = query.trim()
-    if (!normalizedQuery) {
-      setError('Нельзя отправить событие без исходного поискового запроса.')
-      return
-    }
+    const isFeedFlow = normalizedQuery.length === 0
 
     if (openDialog) {
       setActiveResult(result)
@@ -935,10 +1064,14 @@ function App() {
         customerId: selectedCustomer || null,
         eventType,
         productId: result.product.id,
-        query: normalizedQuery,
+        query: normalizedQuery || null,
         position,
       })
-      await executeSearch({ capturePrevious: true })
+      if (isFeedFlow) {
+        await loadRecommendations({ capturePrevious: true })
+      } else {
+        await executeSearch({ capturePrevious: true })
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось записать событие.')
     }
@@ -949,12 +1082,20 @@ function App() {
     setSelectedCustomer(nextCustomerId)
     setSessionId(nextSessionId)
     setPage(1)
+    setFilters({})
     setActiveResult(null)
-    if (searchState && query.trim()) {
+    if (query.trim()) {
       void executeSearch({
         nextCustomerId,
         nextSessionId,
         capturePrevious: true,
+        nextPage: 1,
+      })
+    } else {
+      void loadRecommendations({
+        nextCustomerId,
+        nextSessionId,
+        capturePrevious: Boolean(searchState),
         nextPage: 1,
       })
     }
@@ -992,6 +1133,9 @@ function App() {
   const attributeFacets = searchState?.facets?.attributes ?? []
   const profileSummary = searchState?.profileSummary
   const selectedProfile = profiles.find((profile) => profile.customerId === selectedCustomer) ?? null
+  const isFeedMode = Boolean(
+    searchState && searchState.parserSource.endsWith('_feed') && query.trim().length === 0,
+  )
   const currentPage = searchState
     ? Math.max(1, Math.floor(searchState.offset / Math.max(searchState.limit, 1)) + 1)
     : page
@@ -1146,11 +1290,11 @@ function App() {
                   <div className="flex flex-col justify-end gap-2">
                     <Button
                       className="h-11"
-                      disabled={!hasDataset || searching || query.trim().length === 0}
+                      disabled={!hasDataset || searching}
                       onClick={() => void executeSearch({ targetTab: 'search', nextPage: 1 })}
                     >
                       {searching ? <Loader2 className="size-4 animate-spin" /> : <Search className="size-4" />}
-                      Искать
+                      {query.trim().length > 0 ? 'Искать' : 'Подобрать'}
                     </Button>
                     <Button
                       variant="outline"
@@ -1159,10 +1303,16 @@ function App() {
                         const nextSessionId = createSessionId()
                         setSessionId(nextSessionId)
                         setPage(1)
-                        if (searchState && query.trim()) {
+                        if (query.trim()) {
                           void executeSearch({
                             nextSessionId,
                             capturePrevious: true,
+                            nextPage: 1,
+                          })
+                        } else {
+                          void loadRecommendations({
+                            nextSessionId,
+                            capturePrevious: Boolean(searchState),
                             nextPage: 1,
                           })
                         }
@@ -1190,7 +1340,7 @@ function App() {
                   ) : null}
                 </div>
 
-                {interpretation ? (
+                {interpretation && !isFeedMode ? (
                   <div className="grid gap-3 lg:grid-cols-[1.1fr_1fr]">
                     <div className="rounded-xl border bg-muted/30 p-4">
                       <div className="text-xs uppercase tracking-wide text-muted-foreground">
@@ -1257,6 +1407,20 @@ function App() {
                     </div>
                   </div>
                 ) : null}
+
+                {isFeedMode ? (
+                  <div className="rounded-xl border bg-muted/30 p-4">
+                    <div className="text-xs uppercase tracking-wide text-muted-foreground">
+                      Персональная витрина
+                    </div>
+                    <div className="mt-2 text-sm text-muted-foreground">
+                      При пустом запросе система сразу показывает базовую подборку под выбранного
+                      заказчика: сначала учитывает историю контрактов и категории профиля, затем
+                      дотягивает витрину популярными позициями и сразу реагирует на действия в
+                      текущей сессии.
+                    </div>
+                  </div>
+                ) : null}
               </CardContent>
             </Card>
 
@@ -1281,7 +1445,8 @@ function App() {
             ) : (
               <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">
                 <div className="space-y-6">
-                  <Card className="border-border/80 shadow-sm">
+                  {!isFeedMode ? (
+                    <Card className="border-border/80 shadow-sm">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Filter className="size-4" />
@@ -1369,7 +1534,8 @@ function App() {
                         </div>
                       </ScrollArea>
                     </CardContent>
-                  </Card>
+                    </Card>
+                  ) : null}
 
                   <Card className="border-border/80 shadow-sm">
                     <CardHeader>
@@ -1464,15 +1630,32 @@ function App() {
                       totalCount={searchState.totalCount}
                       disabled={searching}
                       onPageChange={(nextPage) => {
-                        void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                        if (isFeedMode) {
+                          void loadRecommendations({
+                            capturePrevious: false,
+                            nextPage,
+                            targetTab: 'search',
+                          })
+                        } else {
+                          void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                        }
                       }}
                       onPageSizeChange={(nextPageSize) => {
-                        void executeSearch({
-                          capturePrevious: false,
-                          nextPage: 1,
-                          nextPageSize,
-                          targetTab: 'search',
-                        })
+                        if (isFeedMode) {
+                          void loadRecommendations({
+                            capturePrevious: false,
+                            nextPage: 1,
+                            nextPageSize,
+                            targetTab: 'search',
+                          })
+                        } else {
+                          void executeSearch({
+                            capturePrevious: false,
+                            nextPage: 1,
+                            nextPageSize,
+                            targetTab: 'search',
+                          })
+                        }
                       }}
                     />
                   ) : null}
@@ -1552,15 +1735,32 @@ function App() {
                       totalCount={searchState.totalCount}
                       disabled={searching}
                       onPageChange={(nextPage) => {
-                        void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                        if (isFeedMode) {
+                          void loadRecommendations({
+                            capturePrevious: false,
+                            nextPage,
+                            targetTab: 'search',
+                          })
+                        } else {
+                          void executeSearch({ capturePrevious: false, nextPage, targetTab: 'search' })
+                        }
                       }}
                       onPageSizeChange={(nextPageSize) => {
-                        void executeSearch({
-                          capturePrevious: false,
-                          nextPage: 1,
-                          nextPageSize,
-                          targetTab: 'search',
-                        })
+                        if (isFeedMode) {
+                          void loadRecommendations({
+                            capturePrevious: false,
+                            nextPage: 1,
+                            nextPageSize,
+                            targetTab: 'search',
+                          })
+                        } else {
+                          void executeSearch({
+                            capturePrevious: false,
+                            nextPage: 1,
+                            nextPageSize,
+                            targetTab: 'search',
+                          })
+                        }
                       }}
                     />
                   ) : null}

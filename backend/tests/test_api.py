@@ -64,6 +64,30 @@ def test_search_returns_personalized_results_after_upload(client, ste_csv, contr
     assert personalized.json()["results"][0]["scoreBreakdown"]
 
 
+def test_recommendations_return_personalized_home_feed(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
+
+    response = client.post(
+        "/search/recommendations",
+        json={
+            "customerId": "7700000001",
+            "sessionId": "feed-session-1",
+            "limit": 6,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["parserSource"] == "personalized_feed"
+    assert payload["query"] == ""
+    assert payload["profileSummary"]["customerId"] == "7700000001"
+    assert len(payload["results"]) > 0
+    assert payload["results"][0]["product"]["id"] in {"1001", "3001"}
+    assert payload["results"][0]["scoreBreakdown"]
+
+
 def test_search_handles_keyboard_layout_and_reports_interpretation(
     client, ste_csv, contracts_csv
 ):

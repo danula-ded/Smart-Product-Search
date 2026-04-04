@@ -119,6 +119,16 @@ class SearchAnalysisResponseSchema(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class RecommendationRequestSchema(BaseModel):
+    customer_id: str | None = Field(default=None, alias="customerId")
+    session_id: str | None = Field(default=None, alias="sessionId")
+    limit: int = Field(default=20, ge=1, le=100)
+    offset: int = Field(default=0, ge=0)
+    include_debug: bool = Field(default=False, alias="includeDebug")
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class EventRequestSchema(BaseModel):
     session_id: str | None = Field(default=None, alias="sessionId")
     customer_id: str | None = Field(default=None, alias="customerId")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import uuid
 from dataclasses import dataclass
@@ -195,6 +196,78 @@ class SearchService:
             "searchTermsUsed": context.retrieval_tokens,
             "queryInterpretation": self._query_interpretation_payload(context),
             "parserSource": "rule_based",
+        }
+
+    def recommendations(
+        self,
+        *,
+        customer_id: str | None,
+        session_id: str | None,
+        limit: int,
+        offset: int,
+        include_debug: bool,
+        track_event: bool = True,
+    ) -> dict[str, Any]:
+        started_at = perf_counter()
+
+        retrieval_started_at = perf_counter()
+        candidate_pool = max(
+            180,
+            offset + limit + 60,
+            (offset + limit) * 4,
+        )
+        candidates = self._retrieve_recommendation_candidates(customer_id, candidate_pool)
+        retrieval_ms = int((perf_counter() - retrieval_started_at) * 1000)
+
+        overlay = self._load_personalization_overlay(customer_id, session_id)
+
+        rerank_started_at = perf_counter()
+        ranked = [
+            self._score_recommendation_candidate(
+                candidate,
+                overlay=overlay,
+                include_debug=include_debug,
+            )
+            for candidate in candidates
+        ]
+        ranked = [item for item in ranked if item["score"] > 0]
+        ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
+        rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
+
+        if track_event and session_id:
+            self.record_event(
+                event_type="search_submitted",
+                session_id=session_id,
+                customer_id=customer_id,
+                product_id=None,
+                query=None,
+                position=None,
+                dwell_ms=None,
+            )
+
+        parser_source = "personalized_feed" if customer_id else "popular_feed"
+
+        return {
+            "query": "",
+            "normalizedQuery": "",
+            "correctedQuery": "",
+            "appliedSynonyms": [],
+            "searchTermsUsed": [],
+            "queryInterpretation": self._empty_query_interpretation(),
+            "parserSource": parser_source,
+            "profileSummary": self.get_profile_summary(customer_id),
+            "results": ranked[offset : offset + limit],
+            "facets": {},
+            "appliedFilters": {},
+            "totalCount": len(ranked),
+            "limit": limit,
+            "offset": offset,
+            "timingsMs": {
+                "normalize": 0,
+                "retrieve": retrieval_ms,
+                "rerank": rerank_ms,
+                "total": int((perf_counter() - started_at) * 1000),
+            },
         }
 
     def get_product(self, product_id: str) -> dict[str, Any] | None:
@@ -477,6 +550,15 @@ class SearchService:
             "synonymMappings": context.synonym_mappings,
         }
 
+    def _empty_query_interpretation(self) -> dict[str, Any]:
+        return {
+            "correctedTokens": [],
+            "retrievalTokens": [],
+            "layoutCorrections": [],
+            "typoCorrections": [],
+            "synonymMappings": [],
+        }
+
     def _best_lexicon_match(self, token: str, choices: list[str]) -> dict[str, Any] | None:
         if not choices:
             return None
@@ -573,29 +655,7 @@ class SearchService:
             if rows:
                 break
 
-        ste_ids = [row["ste_id"] for row in rows]
-        attr_rows: list[Any] = []
-        if ste_ids:
-            placeholders = ",".join("?" for _ in ste_ids)
-            attr_rows = self.db.query_all(
-                f"""
-                SELECT
-                    ste_id,
-                    attr_name_raw,
-                    attr_name_norm,
-                    attr_value_raw,
-                    attr_value_norm,
-                    numeric_value
-                FROM product_attributes
-                WHERE ste_id IN ({placeholders})
-                """,
-                ste_ids,
-            )
-
-        attr_map: dict[str, list[Any]] = {}
-        for attr in attr_rows:
-            attr_map.setdefault(attr["ste_id"], []).append(attr)
-
+        attr_map = self._load_attribute_map([row["ste_id"] for row in rows])
         return [
             {
                 "product": row,
@@ -604,6 +664,158 @@ class SearchService:
             }
             for row in rows
         ]
+
+    def _retrieve_recommendation_candidates(
+        self,
+        customer_id: str | None,
+        candidate_limit: int,
+    ) -> list[dict[str, Any]]:
+        candidate_rows: dict[str, dict[str, Any]] = {}
+
+        if customer_id:
+            history_rows = self.db.query_all(
+                """
+                SELECT
+                    p.*,
+                    css.weight AS history_weight,
+                    0.0 AS category_weight,
+                    0 AS popularity
+                FROM customer_ste_stats css
+                JOIN products p ON p.ste_id = css.ste_id
+                WHERE css.customer_inn = ?
+                ORDER BY css.weight DESC, p.updated_at DESC
+                LIMIT ?
+                """,
+                [customer_id, candidate_limit],
+            )
+            self._merge_recommendation_rows(candidate_rows, history_rows)
+
+            category_rows = self.db.query_all(
+                """
+                SELECT category_norm, weight
+                FROM customer_category_stats
+                WHERE customer_inn = ?
+                ORDER BY weight DESC
+                LIMIT 6
+                """,
+                [customer_id],
+            )
+            if category_rows:
+                category_values = [row["category_norm"] for row in category_rows]
+                category_weights = {
+                    row["category_norm"]: float(row["weight"]) for row in category_rows
+                }
+                placeholders = ",".join("?" for _ in category_values)
+                params = [*category_values, candidate_limit * 2]
+                category_candidates = self.db.query_all(
+                    f"""
+                    SELECT
+                        p.*,
+                        0.0 AS history_weight,
+                        0.0 AS category_weight,
+                        COUNT(c.contract_key) AS popularity
+                    FROM products p
+                    LEFT JOIN contracts c ON c.ste_id = p.ste_id
+                    WHERE p.category_norm IN ({placeholders})
+                    GROUP BY p.ste_id
+                    ORDER BY popularity DESC, p.updated_at DESC
+                    LIMIT ?
+                    """,
+                    params,
+                )
+                for row in category_candidates:
+                    entry = candidate_rows.setdefault(
+                        row["ste_id"],
+                        {
+                            "product": row,
+                            "historyWeight": 0.0,
+                            "categoryWeight": 0.0,
+                            "popularity": 0,
+                        },
+                    )
+                    entry["product"] = row
+                    entry["categoryWeight"] = max(
+                        entry["categoryWeight"],
+                        category_weights.get(row["category_norm"], 0.0),
+                    )
+                    entry["popularity"] = max(entry["popularity"], int(row["popularity"] or 0))
+
+        if len(candidate_rows) < candidate_limit:
+            popular_rows = self.db.query_all(
+                """
+                SELECT
+                    p.*,
+                    0.0 AS history_weight,
+                    0.0 AS category_weight,
+                    COUNT(c.contract_key) AS popularity
+                FROM contracts c
+                JOIN products p ON p.ste_id = c.ste_id
+                WHERE c.matched_product = 1
+                GROUP BY p.ste_id
+                ORDER BY popularity DESC, p.updated_at DESC
+                LIMIT ?
+                """,
+                [candidate_limit],
+            )
+            self._merge_recommendation_rows(candidate_rows, popular_rows)
+
+        selected_entries = list(candidate_rows.values())[: candidate_limit * 2]
+        attr_map = self._load_attribute_map([entry["product"]["ste_id"] for entry in selected_entries])
+        for entry in selected_entries:
+            entry["attributes"] = attr_map.get(entry["product"]["ste_id"], [])
+        return selected_entries
+
+    def _merge_recommendation_rows(
+        self,
+        candidate_rows: dict[str, dict[str, Any]],
+        rows: list[Any],
+    ) -> None:
+        for row in rows:
+            entry = candidate_rows.setdefault(
+                row["ste_id"],
+                {
+                    "product": row,
+                    "historyWeight": 0.0,
+                    "categoryWeight": 0.0,
+                    "popularity": 0,
+                },
+            )
+            entry["product"] = row
+            entry["historyWeight"] = max(
+                entry["historyWeight"],
+                float(row["history_weight"] or 0.0),
+            )
+            entry["categoryWeight"] = max(
+                entry["categoryWeight"],
+                float(row["category_weight"] or 0.0),
+            )
+            entry["popularity"] = max(entry["popularity"], int(row["popularity"] or 0))
+
+    def _load_attribute_map(self, ste_ids: list[str]) -> dict[str, list[Any]]:
+        if not ste_ids:
+            return {}
+
+        ste_ids = list(dict.fromkeys(ste_ids))
+        placeholders = ",".join("?" for _ in ste_ids)
+        attr_rows = self.db.query_all(
+            f"""
+            SELECT
+                ste_id,
+                attr_name_raw,
+                attr_name_norm,
+                attr_value_raw,
+                attr_value_norm,
+                numeric_value
+            FROM product_attributes
+            WHERE ste_id IN ({placeholders})
+            """,
+            ste_ids,
+        )
+
+        attr_map: dict[str, list[Any]] = {}
+        for attr in attr_rows:
+            attr_map.setdefault(attr["ste_id"], []).append(attr)
+        return attr_map
 
     def _prepare_fts_terms(self, tokens: list[str]) -> list[str]:
         prepared: list[str] = []
@@ -859,6 +1071,122 @@ class SearchService:
         if include_debug:
             payload["scoreBreakdown"] = factors
             payload["corrections"] = context.corrections
+        return payload
+
+    def _score_recommendation_candidate(
+        self,
+        candidate: dict[str, Any],
+        *,
+        overlay: dict[str, Any] | None,
+        include_debug: bool,
+    ) -> dict[str, Any]:
+        row = candidate["product"]
+        attributes = self._dedupe_attributes(candidate.get("attributes", []))
+        category_norm = row["category_norm"]
+        search_text = row["search_text"]
+
+        factors: list[dict[str, Any]] = []
+        score = 0.2
+
+        history_weight = float(candidate.get("historyWeight", 0.0))
+        if history_weight > 0:
+            bonus = min(3.4, 0.55 * history_weight)
+            score += bonus
+            factors.append(
+                {
+                    "type": "history_product",
+                    "value": round(bonus, 4),
+                    "reason": "Заказчик уже закупал этот СТЕ, поэтому товар поднят в базовой подборке.",
+                }
+            )
+
+        category_weight = float(candidate.get("categoryWeight", 0.0))
+        if category_weight > 0:
+            bonus = min(1.9, 0.24 * category_weight)
+            score += bonus
+            factors.append(
+                {
+                    "type": "history_category",
+                    "value": round(bonus, 4),
+                    "reason": f"Категория входит в сильные предпочтения заказчика: {row['category_raw']}",
+                }
+            )
+
+        popularity = int(candidate.get("popularity", 0))
+        if popularity > 0:
+            bonus = min(0.9, 0.12 * math.log1p(popularity))
+            score += bonus
+            factors.append(
+                {
+                    "type": "popular",
+                    "value": round(bonus, 4),
+                    "reason": "Товар часто встречается в закупках и подходит для стартовой витрины.",
+                }
+            )
+
+        if overlay:
+            profile_tokens = sorted(
+                overlay["profileTokens"].items(),
+                key=lambda item: (-item[1], item[0]),
+            )[:12]
+            token_hits: list[str] = []
+            token_bonus = 0.0
+            for token, token_weight in profile_tokens:
+                if token in search_text:
+                    token_hits.append(token)
+                    token_bonus += min(0.18, 0.018 * token_weight)
+            if token_bonus > 0:
+                token_bonus = min(1.1, token_bonus)
+                score += token_bonus
+                factors.append(
+                    {
+                        "type": "history_tokens",
+                        "value": round(token_bonus, 4),
+                        "reason": f"Название и характеристики совпали с частыми терминами профиля: {', '.join(token_hits[:5])}",
+                    }
+                )
+
+            session_delta = overlay["sessionProducts"].get(row["ste_id"], 0.0)
+            if session_delta:
+                score += session_delta
+                factors.append(
+                    {
+                        "type": "session_product",
+                        "value": round(session_delta, 4),
+                        "reason": (
+                            "Текущая сессия уже дала положительный сигнал по этому товару."
+                            if session_delta > 0
+                            else "Текущая сессия дала отрицательный сигнал по этому товару."
+                        ),
+                    }
+                )
+
+            session_category_delta = overlay["sessionCategories"].get(category_norm, 0.0)
+            if session_category_delta:
+                score += session_category_delta
+                factors.append(
+                    {
+                        "type": "session_category",
+                        "value": round(session_category_delta, 4),
+                        "reason": (
+                            "Действия в текущей сессии усилили эту категорию."
+                            if session_category_delta > 0
+                            else "Действия в текущей сессии ослабили эту категорию."
+                        ),
+                    }
+                )
+
+        score = round(score, 6)
+        explanation_parts = [factor["reason"] for factor in factors if factor["value"] != 0]
+        payload = {
+            "product": self._product_payload(row, attributes),
+            "score": score,
+            "explanation": "; ".join(explanation_parts[:4])
+            or "Подборка сформирована по истории закупок и популярности товара.",
+        }
+        if include_debug:
+            payload["scoreBreakdown"] = factors
+            payload["corrections"] = []
         return payload
 
     def _product_payload(self, row, attributes) -> dict[str, Any]:
