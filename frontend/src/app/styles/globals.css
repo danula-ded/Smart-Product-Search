@@ -1,0 +1,51 @@
+@import "./theme.css";
+
+@layer base {
+  * {
+    @apply border-border outline-none;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  html {
+    @apply font-sans;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply antialiased bg-background text-foreground;
+    font-family: "Geist Variable", "Segoe UI Variable", sans-serif;
+    background-image: none;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  a {
+    color: var(--semantic-link-primary);
+  }
+
+  a:hover {
+    color: var(--semantic-link-hover);
+  }
+
+  ::selection {
+    background: var(--semantic-selected-surface);
+    color: var(--semantic-text-primary);
+  }
+}
+
+@layer components {
+  .brand-shell {
+    position: static;
+    isolation: auto;
+  }
+}

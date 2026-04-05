@@ -3,26 +3,20 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import math
 import re
 import uuid
 from dataclasses import dataclass
-from difflib import SequenceMatcher
 from time import perf_counter
 from typing import Any
 
-try:  # pragma: no cover - optional dependency path
-    from rapidfuzz import fuzz, process
-except Exception:  # pragma: no cover
-    fuzz = None
-    process = None
-
 from app.config import settings
+from app.services.ranking.catboost_ranker import CatBoostRanker
+from app.services.ranking.features import empty_feature_vector, merge_feature_value
+from app.services.search_nlp.query_understanding import QueryUnderstandingService
 from app.services.text_utils import (
-    SYNONYM_MAP,
     bm25_to_score,
-    expand_synonyms,
-    keyboard_layout_variants,
     normalize_text,
     parse_numeric_value,
     tokenize,
@@ -53,6 +47,19 @@ FACTOR_TITLES = {
 }
 
 FTS_TERM_RE = re.compile(r"[a-z\u0400-\u04ff0-9]+", re.IGNORECASE)
+NEW_CUSTOMER_ID = "__new_customer__"
+NEW_CUSTOMER_PROFILE = {
+    "customerId": NEW_CUSTOMER_ID,
+    "label": "Новый заказчик",
+    "summary": {
+        "customerName": "Новый заказчик без истории закупок",
+        "purchaseCount": 0,
+        "matchedPurchaseCount": 0,
+        "topCategories": [],
+        "topProducts": [],
+        "mode": "cold_start",
+    },
+}
 
 
 @dataclass
@@ -68,6 +75,9 @@ class QueryContext:
     layout_corrections: list[dict[str, Any]]
     typo_corrections: list[dict[str, Any]]
     synonym_mappings: list[dict[str, Any]]
+    lemma_mappings: list[dict[str, Any]]
+    spell_candidates: list[dict[str, Any]]
+    protected_tokens: list[str]
 
 
 class SearchService:
@@ -75,6 +85,28 @@ class SearchService:
 
     def __init__(self, db: SQLiteDatabase) -> None:
         self.db = db
+        self._popular_recommendation_rows: list[dict[str, Any]] = []
+        self._popular_recommendation_revision: tuple[int, int, str] | None = None
+        self._query_understanding = QueryUnderstandingService(db)
+        self._ranker_revision: str | None = None
+        self._ranker = CatBoostRanker()
+
+    def invalidate_runtime_caches(self) -> None:
+        self._popular_recommendation_rows = []
+        self._popular_recommendation_revision = None
+        self._ranker_revision = None
+
+    def prewarm(self) -> None:
+        self._refresh_ranker_if_needed()
+        self._query_understanding.parse("флешка")
+        self.recommendations(
+            customer_id=None,
+            session_id=None,
+            limit=12,
+            offset=0,
+            include_debug=False,
+            track_event=False,
+        )
 
     def search(
         self,
@@ -92,6 +124,7 @@ class SearchService:
         started_at = perf_counter()
         context = self._normalize_query(query)
         normalization_ms = int((perf_counter() - started_at) * 1000)
+        self._refresh_ranker_if_needed()
 
         if not context.retrieval_tokens:
             return {
@@ -102,6 +135,7 @@ class SearchService:
                 "searchTermsUsed": context.retrieval_tokens,
                 "queryInterpretation": self._query_interpretation_payload(context),
                 "parserSource": "rule_based",
+                "parserSourceDetails": self._parser_source_details(),
                 "profileSummary": self.get_profile_summary(customer_id),
                 "results": [],
                 "facets": {},
@@ -109,6 +143,7 @@ class SearchService:
                 "totalCount": 0,
                 "limit": limit,
                 "offset": offset,
+                "rankingModelVersion": self._ranker.version,
                 "timingsMs": {
                     "normalize": normalization_ms,
                     "retrieve": 0,
@@ -143,6 +178,7 @@ class SearchService:
             )
             for candidate in candidates
         ]
+        self._apply_learned_scores(ranked, feed_mode=False)
         ranked = [item for item in ranked if item["score"] > 0]
         ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
         active_filters = self._normalize_filters(filters or {})
@@ -171,6 +207,7 @@ class SearchService:
             "searchTermsUsed": context.retrieval_tokens,
             "queryInterpretation": self._query_interpretation_payload(context),
             "parserSource": "rule_based",
+            "parserSourceDetails": self._parser_source_details(),
             "profileSummary": self.get_profile_summary(customer_id),
             "results": ranked[offset : offset + limit],
             "facets": facets,
@@ -178,6 +215,7 @@ class SearchService:
             "totalCount": total_count,
             "limit": limit,
             "offset": offset,
+            "rankingModelVersion": self._ranker.version,
             "timingsMs": {
                 "normalize": normalization_ms,
                 "retrieve": retrieval_ms,
@@ -187,6 +225,7 @@ class SearchService:
         }
 
     def analyze_query(self, query: str) -> dict[str, Any]:
+        self._refresh_ranker_if_needed()
         context = self._normalize_query(query)
         return {
             "query": query,
@@ -196,6 +235,7 @@ class SearchService:
             "searchTermsUsed": context.retrieval_tokens,
             "queryInterpretation": self._query_interpretation_payload(context),
             "parserSource": "rule_based",
+            "parserSourceDetails": self._parser_source_details(),
         }
 
     def recommendations(
@@ -209,6 +249,8 @@ class SearchService:
         track_event: bool = True,
     ) -> dict[str, Any]:
         started_at = perf_counter()
+        self._refresh_ranker_if_needed()
+        effective_customer_id = None if customer_id == NEW_CUSTOMER_ID else customer_id
 
         retrieval_started_at = perf_counter()
         candidate_pool = max(
@@ -216,10 +258,13 @@ class SearchService:
             offset + limit + 60,
             (offset + limit) * 4,
         )
-        candidates = self._retrieve_recommendation_candidates(customer_id, candidate_pool)
+        candidates = self._retrieve_recommendation_candidates(
+            effective_customer_id,
+            candidate_pool,
+        )
         retrieval_ms = int((perf_counter() - retrieval_started_at) * 1000)
 
-        overlay = self._load_personalization_overlay(customer_id, session_id)
+        overlay = self._load_personalization_overlay(effective_customer_id, session_id)
 
         rerank_started_at = perf_counter()
         ranked = [
@@ -230,8 +275,10 @@ class SearchService:
             )
             for candidate in candidates
         ]
+        self._apply_learned_scores(ranked, feed_mode=True)
         ranked = [item for item in ranked if item["score"] > 0]
         ranked.sort(key=lambda item: (-item["score"], item["product"]["title"], item["product"]["id"]))
+        ranked = self._blend_recommendation_feed(ranked, effective_customer_id)
         rerank_ms = int((perf_counter() - rerank_started_at) * 1000)
 
         if track_event and session_id:
@@ -245,7 +292,10 @@ class SearchService:
                 dwell_ms=None,
             )
 
-        parser_source = "personalized_feed" if customer_id else "popular_feed"
+        if customer_id == NEW_CUSTOMER_ID:
+            parser_source = "cold_start_feed"
+        else:
+            parser_source = "personalized_feed" if customer_id else "popular_feed"
 
         return {
             "query": "",
@@ -255,6 +305,7 @@ class SearchService:
             "searchTermsUsed": [],
             "queryInterpretation": self._empty_query_interpretation(),
             "parserSource": parser_source,
+            "parserSourceDetails": self._parser_source_details(feed_mode=True),
             "profileSummary": self.get_profile_summary(customer_id),
             "results": ranked[offset : offset + limit],
             "facets": {},
@@ -262,6 +313,7 @@ class SearchService:
             "totalCount": len(ranked),
             "limit": limit,
             "offset": offset,
+            "rankingModelVersion": self._ranker.version,
             "timingsMs": {
                 "normalize": 0,
                 "retrieve": retrieval_ms,
@@ -363,7 +415,7 @@ class SearchService:
 
     def list_demo_profiles(self) -> list[dict[str, Any]]:
         rows = self.db.query_all("SELECT * FROM demo_profiles ORDER BY sort_order ASC")
-        return [
+        profiles = [
             {
                 "customerId": row["customer_inn"],
                 "label": row["label"],
@@ -371,10 +423,23 @@ class SearchService:
             }
             for row in rows
         ]
+        profiles.append(NEW_CUSTOMER_PROFILE)
+        return profiles
 
     def get_profile_summary(self, customer_id: str | None) -> dict[str, Any] | None:
         if not customer_id:
             return None
+        if customer_id == NEW_CUSTOMER_ID:
+            return {
+                "customerId": NEW_CUSTOMER_ID,
+                "customerName": "Новый заказчик без истории закупок",
+                "purchaseCount": 0,
+                "matchedPurchaseCount": 0,
+                "totalSpend": 0.0,
+                "lastPurchaseAt": None,
+                "topCategories": [],
+                "topProducts": [],
+            }
 
         row = self.db.query_one(
             "SELECT * FROM customer_profiles WHERE customer_inn = ?",
@@ -394,152 +459,67 @@ class SearchService:
             "topProducts": json.loads(row["top_ste_ids_json"]),
         }
 
-    def _normalize_query(self, query: str) -> QueryContext:
-        normalized_query = normalize_text(query)
-        tokens = tokenize(normalized_query)
-        lexicon_rows = self.db.query_all(
-            "SELECT term, doc_freq FROM lexicon ORDER BY doc_freq DESC LIMIT ?",
-            [settings.LEXICON_LIMIT],
+    def _refresh_ranker_if_needed(self) -> None:
+        row = self.db.query_one(
+            """
+            SELECT artifact_key, path, meta_json, updated_at
+            FROM model_artifacts
+            WHERE artifact_key = 'catboost_ranker'
+            """
         )
-        lexicon = {row["term"]: int(row["doc_freq"]) for row in lexicon_rows}
-        lexicon_terms = list(lexicon.keys())
-        prefix_candidate_cache: dict[str, list[str]] = {}
+        revision = str(row["updated_at"]) if row else ""
+        if revision == self._ranker_revision:
+            return
+        self._ranker = CatBoostRanker.from_artifact_row(row)
+        self._ranker_revision = revision
 
-        corrections: list[dict[str, Any]] = []
-        corrected_tokens: list[str] = []
-        synonym_rewrites: list[str] = []
-        layout_corrections: list[dict[str, Any]] = []
-        typo_corrections: list[dict[str, Any]] = []
-        synonym_mappings: list[dict[str, Any]] = []
-
-        for token in tokens:
-            resolved = self._resolve_query_token(
-                token,
-                lexicon=lexicon,
-                lexicon_terms=lexicon_terms,
-                prefix_candidate_cache=prefix_candidate_cache,
-            )
-            corrected_tokens.append(resolved["displayToken"])
-            corrections.extend(resolved["corrections"])
-            layout_corrections.extend(resolved["layoutCorrections"])
-            typo_corrections.extend(resolved["typoCorrections"])
-            synonym_mappings.extend(resolved["synonymMappings"])
-            synonym_rewrites.extend(resolved["synonymRewrites"])
-
-        retrieval_tokens, applied_synonyms = expand_synonyms(corrected_tokens)
-        applied_synonyms = list(dict.fromkeys([*synonym_rewrites, *applied_synonyms]))
-
-        numeric_tokens: list[float] = []
-        for token in corrected_tokens:
-            numeric_value, _ = parse_numeric_value(token)
-            if numeric_value is not None:
-                numeric_tokens.append(numeric_value)
-
-        return QueryContext(
-            original_query=query,
-            normalized_query=normalized_query,
-            corrected_query=" ".join(corrected_tokens),
-            corrected_tokens=corrected_tokens,
-            retrieval_tokens=retrieval_tokens,
-            numeric_tokens=numeric_tokens,
-            corrections=corrections,
-            applied_synonyms=applied_synonyms,
-            layout_corrections=layout_corrections,
-            typo_corrections=typo_corrections,
-            synonym_mappings=synonym_mappings,
-        )
-
-    def _resolve_query_token(
-        self,
-        token: str,
-        *,
-        lexicon: dict[str, int],
-        lexicon_terms: list[str],
-        prefix_candidate_cache: dict[str, list[str]],
-    ) -> dict[str, Any]:
-        display_token = token
-        corrections: list[dict[str, Any]] = []
-        layout_corrections: list[dict[str, Any]] = []
-        typo_corrections: list[dict[str, Any]] = []
-        synonym_mappings: list[dict[str, Any]] = []
-        synonym_rewrites: list[str] = []
-
-        layout_variant = self._select_layout_variant(token, lexicon)
-        if layout_variant and layout_variant != token:
-            display_token = layout_variant
-            layout_entry = {
-                "type": "keyboard_layout",
-                "from": token,
-                "to": layout_variant,
-                "keyboard": self._detect_layout_direction(token),
-            }
-            corrections.append(layout_entry)
-            layout_corrections.append(layout_entry)
-
-        canonical = SYNONYM_MAP.get(display_token, display_token)
-        known_token = display_token in lexicon or canonical in lexicon
-        if not known_token and len(display_token) >= 4:
-            best = self._best_lexicon_match(display_token, lexicon_terms)
-            if best is None:
-                prefix_candidates = self._load_prefix_lexicon_candidates(
-                    display_token, prefix_candidate_cache
-                )
-                best = self._best_lexicon_match(display_token, prefix_candidates)
-            if best is not None:
-                if best["term"] == display_token:
-                    best = None
-            if best is not None:
-                display_token = best["term"]
-                typo_entry = {
-                    "type": "typo",
-                    "from": token,
-                    "to": best["term"],
-                    "score": best["score"],
-                }
-                corrections.append(typo_entry)
-                typo_corrections.append(typo_entry)
-
-        canonical = SYNONYM_MAP.get(display_token, display_token)
-        if canonical != display_token:
-            synonym_entry = {
-                "type": "synonym",
-                "from": display_token,
-                "to": canonical,
-            }
-            synonym_mappings.append(synonym_entry)
-            synonym_rewrites.append(f"{display_token} -> {canonical}")
-
+    def _parser_source_details(self, *, feed_mode: bool = False) -> dict[str, Any]:
         return {
-            "displayToken": display_token,
-            "corrections": corrections,
-            "layoutCorrections": layout_corrections,
-            "typoCorrections": typo_corrections,
-            "synonymMappings": synonym_mappings,
-            "synonymRewrites": synonym_rewrites,
+            "queryUnderstanding": "search_nlp_v2",
+            "retrieval": "sqlite_fts5",
+            "ranking": "catboost" if self._ranker.is_available else "heuristic",
+            "feedMode": feed_mode,
         }
 
-    def _select_layout_variant(self, token: str, lexicon: dict[str, int]) -> str | None:
-        variants = []
-        for variant in keyboard_layout_variants(token):
-            canonical = SYNONYM_MAP.get(variant, variant)
-            score = lexicon.get(variant, 0) + lexicon.get(canonical, 0)
-            if score > 0:
-                variants.append((score, variant))
-        if not variants:
-            return None
-        variants.sort(key=lambda item: (-item[0], item[1]))
-        return variants[0][1]
+    def _apply_learned_scores(self, payloads: list[dict[str, Any]], *, feed_mode: bool) -> None:
+        if not payloads or not self._ranker.is_available:
+            return
+        learned_scores = self._ranker.score_many(payloads, feed_mode=feed_mode)
+        if not learned_scores:
+            return
+        heuristic_weight = 0.5 if feed_mode else 0.6
+        learned_weight = 1.0 - heuristic_weight
+        for payload, learned_score in zip(payloads, learned_scores):
+            base_score = float(payload.get("score", 0.0))
+            blended_score = (heuristic_weight * base_score) + (learned_weight * float(learned_score))
+            payload["score"] = round(blended_score, 6)
+            if payload.get("scoreBreakdown") is not None:
+                payload["scoreBreakdown"].append(
+                    {
+                        "type": "ml_rerank",
+                        "value": round(float(learned_score), 4),
+                        "reason": "Дополнительный обученный rerank поверх быстрых эвристик.",
+                    }
+                )
 
-    def _detect_layout_direction(self, source: str) -> str:
-        if re.search(r"[a-z]", source, re.IGNORECASE) and not re.search(
-            r"[\u0400-\u04ff]", source, re.IGNORECASE
-        ):
-            return "en_to_ru"
-        if re.search(r"[\u0400-\u04ff]", source, re.IGNORECASE) and not re.search(
-            r"[a-z]", source, re.IGNORECASE
-        ):
-            return "ru_to_en"
-        return "mixed"
+    def _normalize_query(self, query: str) -> QueryContext:
+        understanding = self._query_understanding.parse(query)
+        return QueryContext(
+            original_query=query,
+            normalized_query=understanding.normalized_query,
+            corrected_query=understanding.corrected_query,
+            corrected_tokens=understanding.corrected_tokens,
+            retrieval_tokens=understanding.retrieval_tokens,
+            numeric_tokens=understanding.numeric_tokens,
+            corrections=understanding.corrections,
+            applied_synonyms=understanding.applied_synonyms,
+            layout_corrections=understanding.layout_corrections,
+            typo_corrections=understanding.typo_corrections,
+            synonym_mappings=understanding.synonym_mappings,
+            lemma_mappings=understanding.lemma_mappings,
+            spell_candidates=understanding.spell_candidates,
+            protected_tokens=understanding.protected_tokens,
+        )
 
     def _query_interpretation_payload(self, context: QueryContext) -> dict[str, Any]:
         return {
@@ -548,6 +528,9 @@ class SearchService:
             "layoutCorrections": context.layout_corrections,
             "typoCorrections": context.typo_corrections,
             "synonymMappings": context.synonym_mappings,
+            "lemmaMappings": context.lemma_mappings,
+            "spellCandidates": context.spell_candidates,
+            "protectedTokens": context.protected_tokens,
         }
 
     def _empty_query_interpretation(self) -> dict[str, Any]:
@@ -557,58 +540,10 @@ class SearchService:
             "layoutCorrections": [],
             "typoCorrections": [],
             "synonymMappings": [],
+            "lemmaMappings": [],
+            "spellCandidates": [],
+            "protectedTokens": [],
         }
-
-    def _best_lexicon_match(self, token: str, choices: list[str]) -> dict[str, Any] | None:
-        if not choices:
-            return None
-
-        if process is not None and fuzz is not None:
-            best = process.extractOne(
-                token,
-                choices,
-                scorer=fuzz.ratio,
-                score_cutoff=88,
-            )
-            if best:
-                return {"term": best[0], "score": round(float(best[1]), 2)}
-            return None
-
-        best_term = None
-        best_score = 0.0
-        for choice in choices:
-            score = SequenceMatcher(a=token, b=choice).ratio() * 100
-            if score >= 88 and score > best_score:
-                best_term = choice
-                best_score = score
-        if best_term is None:
-            return None
-        return {"term": best_term, "score": round(best_score, 2)}
-
-    def _load_prefix_lexicon_candidates(
-        self,
-        token: str,
-        cache: dict[str, list[str]],
-    ) -> list[str]:
-        for prefix_length in (5, 4, 3):
-            if len(token) < prefix_length:
-                continue
-            prefix = token[:prefix_length]
-            if prefix not in cache:
-                rows = self.db.query_all(
-                    """
-                    SELECT term
-                    FROM lexicon
-                    WHERE term LIKE ?
-                    ORDER BY doc_freq DESC
-                    LIMIT 128
-                    """,
-                    [f"{prefix}%"],
-                )
-                cache[prefix] = [row["term"] for row in rows]
-            if cache[prefix]:
-                return cache[prefix]
-        return []
 
     def _candidate_queries(self, tokens: list[str]) -> list[str]:
         search_tokens = self._prepare_fts_terms(tokens)
@@ -741,29 +676,76 @@ class SearchService:
                     entry["popularity"] = max(entry["popularity"], int(row["popularity"] or 0))
 
         if len(candidate_rows) < candidate_limit:
-            popular_rows = self.db.query_all(
-                """
-                SELECT
-                    p.*,
-                    0.0 AS history_weight,
-                    0.0 AS category_weight,
-                    COUNT(c.contract_key) AS popularity
-                FROM contracts c
-                JOIN products p ON p.ste_id = c.ste_id
-                WHERE c.matched_product = 1
-                GROUP BY p.ste_id
-                ORDER BY popularity DESC, p.updated_at DESC
-                LIMIT ?
-                """,
-                [candidate_limit],
-            )
+            popular_rows = self._load_popular_recommendation_rows(candidate_limit)
             self._merge_recommendation_rows(candidate_rows, popular_rows)
 
-        selected_entries = list(candidate_rows.values())[: candidate_limit * 2]
+        ranked_entries = sorted(
+            candidate_rows.values(),
+            key=lambda entry: (
+                -self._recommendation_proxy_score(entry),
+                -int(entry.get("popularity", 0)),
+                entry["product"]["title_raw"],
+                entry["product"]["ste_id"],
+            ),
+        )
+        selected_entries = ranked_entries[: candidate_limit * 4]
         attr_map = self._load_attribute_map([entry["product"]["ste_id"] for entry in selected_entries])
         for entry in selected_entries:
             entry["attributes"] = attr_map.get(entry["product"]["ste_id"], [])
+            entry["explorationBonus"] = self._stable_exploration_bonus(
+                customer_id,
+                entry["product"]["ste_id"],
+                entry["product"]["category_norm"],
+                has_direct_history=float(entry.get("historyWeight", 0.0)) > 0,
+            )
         return selected_entries
+
+    def _load_popular_recommendation_rows(self, limit: int) -> list[dict[str, Any]]:
+        revision_row = self.db.query_one(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM products) AS products_count,
+                (SELECT COUNT(*) FROM contracts WHERE matched_product = 1) AS matched_contracts_count,
+                COALESCE((SELECT MAX(updated_at) FROM products), '') AS products_revision
+            """
+        )
+        revision = (
+            int(revision_row["products_count"] if revision_row else 0),
+            int(revision_row["matched_contracts_count"] if revision_row else 0),
+            str(revision_row["products_revision"] if revision_row else ""),
+        )
+        if (
+            self._popular_recommendation_revision == revision
+            and len(self._popular_recommendation_rows) >= limit
+        ):
+            return self._popular_recommendation_rows[:limit]
+
+        query_limit = max(limit, 240)
+        rows = self.db.query_all(
+            """
+            SELECT
+                p.*,
+                0.0 AS history_weight,
+                0.0 AS category_weight,
+                pop.popularity AS popularity
+            FROM (
+                SELECT
+                    ste_id,
+                    COUNT(contract_key) AS popularity
+                FROM contracts
+                WHERE matched_product = 1
+                GROUP BY ste_id
+                ORDER BY popularity DESC
+                LIMIT ?
+            ) pop
+            JOIN products p ON p.ste_id = pop.ste_id
+            ORDER BY pop.popularity DESC, p.updated_at DESC
+            """,
+            [query_limit],
+        )
+        self._popular_recommendation_rows = [dict(row) for row in rows]
+        self._popular_recommendation_revision = revision
+        return self._popular_recommendation_rows[:limit]
 
     def _merge_recommendation_rows(
         self,
@@ -822,6 +804,15 @@ class SearchService:
         for token in tokens:
             prepared.extend(part for part in FTS_TERM_RE.findall(token) if part)
         return list(dict.fromkeys(prepared))
+
+    def _candidate_lemma_set(self, *values: str) -> set[str]:
+        lemmas: set[str] = set()
+        for value in values:
+            for token in tokenize(normalize_text(value)):
+                lemma = self._query_understanding.morphology.lemma(token)
+                if lemma:
+                    lemmas.add(lemma)
+        return lemmas
 
     def _load_personalization_overlay(
         self,
@@ -889,6 +880,32 @@ class SearchService:
             "sessionCategories": session_categories,
         }
 
+    def _recommendation_proxy_score(self, entry: dict[str, Any]) -> float:
+        """Mix popularity, category affinity, and direct history before final rerank."""
+        history_weight = float(entry.get("historyWeight", 0.0))
+        category_weight = float(entry.get("categoryWeight", 0.0))
+        popularity = max(0, int(entry.get("popularity", 0)))
+        proxy = 0.42 * math.log1p(popularity)
+        proxy += 0.28 * math.log1p(category_weight)
+        proxy += 0.22 * math.log1p(history_weight)
+        if history_weight <= 0 and category_weight > 0:
+            proxy += 0.12
+        return proxy
+
+    def _stable_exploration_bonus(
+        self,
+        customer_id: str | None,
+        ste_id: str,
+        category_norm: str,
+        *,
+        has_direct_history: bool,
+    ) -> float:
+        seed = f"{customer_id or 'global'}::{category_norm}::{ste_id}"
+        digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()
+        value = int(digest[:8], 16) / 0xFFFFFFFF
+        ceiling = 0.04 if has_direct_history else 0.18
+        return round(value * ceiling, 4)
+
     def _score_candidate(
         self,
         candidate: dict[str, Any],
@@ -902,9 +919,12 @@ class SearchService:
         title_norm = row["title_norm"]
         category_norm = row["category_norm"]
         search_text = row["search_text"]
+        feature_payload: dict[str, Any] = {"_rankingFeatures": empty_feature_vector(feed_mode=False)}
 
         factors: list[dict[str, Any]] = []
-        score = bm25_to_score(candidate["bm25"]) * 2.0
+        bm25_score = bm25_to_score(candidate["bm25"])
+        score = bm25_score * 2.0
+        merge_feature_value(feature_payload, "bm25_score", bm25_score)
         factors.append(
             {
                 "type": "lexical",
@@ -915,6 +935,7 @@ class SearchService:
 
         if context.corrected_query and context.corrected_query in title_norm:
             score += 1.2
+            merge_feature_value(feature_payload, "exact_phrase", 1.0)
             factors.append(
                 {
                     "type": "title_phrase",
@@ -926,6 +947,38 @@ class SearchService:
         title_tokens = set(tokenize(title_norm))
         query_tokens = [token for token in context.retrieval_tokens if token]
         matched_tokens = [token for token in query_tokens if token in title_tokens]
+        category_matched = any(token in category_norm for token in query_tokens)
+        merge_feature_value(feature_payload, "token_overlap", float(len(set(matched_tokens))))
+        merge_feature_value(feature_payload, "category_match", 1.0 if category_matched else 0.0)
+        query_lemmas = {
+            item["to"] for item in context.lemma_mappings if item.get("to")
+        } | set(context.corrected_tokens)
+        candidate_lemmas = self._candidate_lemma_set(
+            row["title_raw"],
+            row["category_raw"],
+            row["attributes_raw"] if "attributes_raw" in row.keys() else "",
+        )
+        merge_feature_value(
+            feature_payload,
+            "lemma_overlap",
+            float(len(query_lemmas.intersection(candidate_lemmas))),
+        )
+        merge_feature_value(
+            feature_payload,
+            "synonym_hits",
+            float(
+                sum(
+                    1
+                    for mapping in context.synonym_mappings
+                    if mapping.get("to")
+                    and (
+                        mapping["to"] in search_text
+                        or mapping["to"] in title_norm
+                        or mapping["to"] in category_norm
+                    )
+                )
+            ),
+        )
         if matched_tokens:
             token_bonus = min(0.9, 0.18 * len(set(matched_tokens)))
             score += token_bonus
@@ -937,7 +990,7 @@ class SearchService:
                 }
             )
 
-        if any(token in category_norm for token in query_tokens):
+        if category_matched:
             score += 0.6
             factors.append(
                 {
@@ -956,6 +1009,7 @@ class SearchService:
             ):
                 attr_matches += 1
                 attr_reason.append(f"{attr['attr_name_raw']}={attr['attr_value_raw']}")
+        merge_feature_value(feature_payload, "attribute_hits", float(attr_matches))
         if attr_matches:
             attr_bonus = min(1.2, 0.25 * attr_matches)
             score += attr_bonus
@@ -975,6 +1029,7 @@ class SearchService:
                 if abs(float(attr["numeric_value"]) - numeric_value) <= 0.01:
                     numeric_matches += 1
                     break
+        merge_feature_value(feature_payload, "numeric_hits", float(numeric_matches))
         if numeric_matches:
             numeric_bonus = min(1.0, 0.5 * numeric_matches)
             score += numeric_bonus
@@ -987,10 +1042,20 @@ class SearchService:
             )
 
         if overlay:
+            relevance_gate = min(
+                1.0,
+                0.2
+                + 0.16 * len(set(matched_tokens))
+                + 0.12 * attr_matches
+                + 0.18 * numeric_matches
+                + (0.18 if context.corrected_query and context.corrected_query in title_norm else 0.0)
+                + (0.12 if category_matched else 0.0),
+            )
             product_weight = overlay["profileProducts"].get(row["ste_id"], 0.0)
             if product_weight > 0:
-                bonus = min(1.4, 0.15 * product_weight)
+                bonus = min(0.75, 0.28 * math.log1p(product_weight)) * relevance_gate
                 score += bonus
+                merge_feature_value(feature_payload, "history_product", bonus)
                 factors.append(
                     {
                         "type": "history_product",
@@ -1001,8 +1066,11 @@ class SearchService:
 
             category_weight = overlay["profileCategories"].get(category_norm, 0.0)
             if category_weight > 0:
-                bonus = min(0.8, 0.06 * category_weight)
+                bonus = min(0.55, 0.14 * math.log1p(category_weight)) * max(
+                    0.45, relevance_gate
+                )
                 score += bonus
+                merge_feature_value(feature_payload, "history_category", bonus)
                 factors.append(
                     {
                         "type": "history_category",
@@ -1019,10 +1087,11 @@ class SearchService:
                     continue
                 if token in search_text or token in title_norm or token in category_norm:
                     token_hits.append(token)
-                    token_bonus += min(0.3, 0.03 * token_weight)
+                    token_bonus += min(0.16, 0.015 * token_weight)
             if token_bonus > 0:
-                token_bonus = min(0.9, token_bonus)
+                token_bonus = min(0.45, token_bonus) * max(0.55, relevance_gate)
                 score += token_bonus
+                merge_feature_value(feature_payload, "history_tokens", token_bonus)
                 factors.append(
                     {
                         "type": "history_tokens",
@@ -1034,6 +1103,7 @@ class SearchService:
             session_delta = overlay["sessionProducts"].get(row["ste_id"], 0.0)
             if session_delta:
                 score += session_delta
+                merge_feature_value(feature_payload, "session_product", session_delta)
                 factors.append(
                     {
                         "type": "session_product",
@@ -1049,6 +1119,7 @@ class SearchService:
             session_category_delta = overlay["sessionCategories"].get(category_norm, 0.0)
             if session_category_delta:
                 score += session_category_delta
+                merge_feature_value(feature_payload, "session_category", session_category_delta)
                 factors.append(
                     {
                         "type": "session_category",
@@ -1061,11 +1132,14 @@ class SearchService:
                     }
                 )
 
+        merge_feature_value(feature_payload, "heuristic_score", score)
+        merge_feature_value(feature_payload, "global_popularity", 0.0)
         score = round(score, 6)
         explanation_parts = [factor["reason"] for factor in factors if factor["value"] != 0]
         payload = {
             "product": self._product_payload(row, attributes),
             "score": score,
+            "_rankingFeatures": feature_payload["_rankingFeatures"],
             "explanation": "; ".join(explanation_parts[:4]) or "Совпадение по поисковому индексу",
         }
         if include_debug:
@@ -1084,14 +1158,16 @@ class SearchService:
         attributes = self._dedupe_attributes(candidate.get("attributes", []))
         category_norm = row["category_norm"]
         search_text = row["search_text"]
+        feature_payload: dict[str, Any] = {"_rankingFeatures": empty_feature_vector(feed_mode=True)}
 
         factors: list[dict[str, Any]] = []
         score = 0.2
 
         history_weight = float(candidate.get("historyWeight", 0.0))
         if history_weight > 0:
-            bonus = min(3.4, 0.55 * history_weight)
+            bonus = min(1.15, 0.34 * math.log1p(history_weight))
             score += bonus
+            merge_feature_value(feature_payload, "history_product", bonus)
             factors.append(
                 {
                     "type": "history_product",
@@ -1102,8 +1178,9 @@ class SearchService:
 
         category_weight = float(candidate.get("categoryWeight", 0.0))
         if category_weight > 0:
-            bonus = min(1.9, 0.24 * category_weight)
+            bonus = min(0.95, 0.2 * math.log1p(category_weight))
             score += bonus
+            merge_feature_value(feature_payload, "history_category", bonus)
             factors.append(
                 {
                     "type": "history_category",
@@ -1114,13 +1191,30 @@ class SearchService:
 
         popularity = int(candidate.get("popularity", 0))
         if popularity > 0:
-            bonus = min(0.9, 0.12 * math.log1p(popularity))
+            bonus = min(1.05, 0.16 * math.log1p(popularity))
             score += bonus
+            merge_feature_value(feature_payload, "global_popularity", bonus)
             factors.append(
                 {
                     "type": "popular",
                     "value": round(bonus, 4),
                     "reason": "Товар часто встречается в закупках и подходит для стартовой витрины.",
+                }
+            )
+
+        exploration_bonus = float(candidate.get("explorationBonus", 0.0))
+        if exploration_bonus > 0:
+            score += exploration_bonus
+            merge_feature_value(feature_payload, "exploration_bonus", exploration_bonus)
+            factors.append(
+                {
+                    "type": "exploration",
+                    "value": round(exploration_bonus, 4),
+                    "reason": (
+                        "В подборку добавлен близкий вариант из подходящей категории, чтобы не показывать только ранее купленные СТЕ."
+                        if history_weight <= 0
+                        else "Подборка слегка разнообразена, чтобы рядом с привычными СТЕ появлялись похожие варианты."
+                    ),
                 }
             )
 
@@ -1134,10 +1228,11 @@ class SearchService:
             for token, token_weight in profile_tokens:
                 if token in search_text:
                     token_hits.append(token)
-                    token_bonus += min(0.18, 0.018 * token_weight)
+                    token_bonus += min(0.12, 0.012 * token_weight)
             if token_bonus > 0:
-                token_bonus = min(1.1, token_bonus)
+                token_bonus = min(0.55, token_bonus)
                 score += token_bonus
+                merge_feature_value(feature_payload, "history_tokens", token_bonus)
                 factors.append(
                     {
                         "type": "history_tokens",
@@ -1149,6 +1244,7 @@ class SearchService:
             session_delta = overlay["sessionProducts"].get(row["ste_id"], 0.0)
             if session_delta:
                 score += session_delta
+                merge_feature_value(feature_payload, "session_product", session_delta)
                 factors.append(
                     {
                         "type": "session_product",
@@ -1164,6 +1260,7 @@ class SearchService:
             session_category_delta = overlay["sessionCategories"].get(category_norm, 0.0)
             if session_category_delta:
                 score += session_category_delta
+                merge_feature_value(feature_payload, "session_category", session_category_delta)
                 factors.append(
                     {
                         "type": "session_category",
@@ -1176,18 +1273,63 @@ class SearchService:
                     }
                 )
 
+        merge_feature_value(feature_payload, "heuristic_score", score)
         score = round(score, 6)
         explanation_parts = [factor["reason"] for factor in factors if factor["value"] != 0]
         payload = {
             "product": self._product_payload(row, attributes),
             "score": score,
+            "_rankingFeatures": feature_payload["_rankingFeatures"],
             "explanation": "; ".join(explanation_parts[:4])
             or "Подборка сформирована по истории закупок и популярности товара.",
+            "_recommendationMeta": {
+                "historyWeight": history_weight,
+                "categoryWeight": category_weight,
+                "popularity": popularity,
+            },
         }
         if include_debug:
             payload["scoreBreakdown"] = factors
             payload["corrections"] = []
         return payload
+
+    def _blend_recommendation_feed(
+        self,
+        ranked: list[dict[str, Any]],
+        customer_id: str | None,
+    ) -> list[dict[str, Any]]:
+        if not customer_id:
+            for item in ranked:
+                item.pop("_recommendationMeta", None)
+            return ranked
+
+        direct_history: list[dict[str, Any]] = []
+        related_category: list[dict[str, Any]] = []
+        popular_only: list[dict[str, Any]] = []
+
+        for item in ranked:
+            meta = item.get("_recommendationMeta", {})
+            history_weight = float(meta.get("historyWeight", 0.0))
+            category_weight = float(meta.get("categoryWeight", 0.0))
+            if history_weight > 0:
+                direct_history.append(item)
+            elif category_weight > 0:
+                related_category.append(item)
+            else:
+                popular_only.append(item)
+
+        blended: list[dict[str, Any]] = []
+        while direct_history or related_category or popular_only:
+            for bucket in (direct_history, related_category, direct_history, popular_only):
+                if bucket:
+                    blended.append(bucket.pop(0))
+            if not related_category and not popular_only and direct_history:
+                blended.extend(direct_history)
+                break
+
+        for item in blended:
+            item.pop("_recommendationMeta", None)
+        return blended
 
     def _product_payload(self, row, attributes) -> dict[str, Any]:
         unique_attributes = self._dedupe_attributes(attributes)

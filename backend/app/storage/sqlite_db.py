@@ -120,6 +120,12 @@ class SQLiteDatabase:
             )
             cursor.execute(
                 """
+                CREATE INDEX IF NOT EXISTS idx_contracts_matched_product_ste_id
+                ON contracts (matched_product, ste_id)
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS customer_profiles (
                     customer_inn TEXT PRIMARY KEY,
                     customer_name TEXT NOT NULL,
@@ -247,6 +253,70 @@ class SQLiteDatabase:
             )
             cursor.execute(
                 """
+                CREATE TABLE IF NOT EXISTS term_dictionary (
+                    term TEXT PRIMARY KEY,
+                    lemma TEXT NOT NULL,
+                    doc_freq INTEGER NOT NULL,
+                    term_type TEXT NOT NULL,
+                    source_mask INTEGER NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_term_dictionary_lemma
+                ON term_dictionary (lemma)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS synonym_rules (
+                    alias TEXT NOT NULL,
+                    canonical TEXT NOT NULL,
+                    scope TEXT NOT NULL DEFAULT 'global',
+                    confidence REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(alias, canonical, scope)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_synonym_rules_status_scope
+                ON synonym_rules (status, scope)
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS synonym_candidates (
+                    alias TEXT NOT NULL,
+                    canonical TEXT NOT NULL,
+                    scope TEXT NOT NULL DEFAULT 'global',
+                    score REAL NOT NULL,
+                    source TEXT NOT NULL,
+                    context_json TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(alias, canonical, scope)
+                )
+                """
+            )
+            cursor.execute(
+                """
+                CREATE TABLE IF NOT EXISTS model_artifacts (
+                    artifact_key TEXT PRIMARY KEY,
+                    signature_json TEXT NOT NULL,
+                    path TEXT NOT NULL,
+                    meta_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            cursor.execute(
+                """
                 CREATE TABLE IF NOT EXISTS runtime_cache (
                     cache_key TEXT PRIMARY KEY,
                     signature_json TEXT NOT NULL,
@@ -305,3 +375,16 @@ class SQLiteDatabase:
                 ),
             )
             connection.commit()
+
+    def optimize(self) -> None:
+        with self.connect() as connection:
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            connection.execute("PRAGMA optimize;")
+
+    def compact(self) -> None:
+        with self.connect() as connection:
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            connection.execute("VACUUM;")
+            connection.execute("PRAGMA optimize;")

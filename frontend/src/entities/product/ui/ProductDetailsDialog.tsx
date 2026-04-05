@@ -1,0 +1,107 @@
+import type { SearchResult } from '@/entities/product/model/types'
+import {
+  AppBadge,
+  AppButton,
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/shared/ui'
+
+import { ProductBadge } from './ProductBadge'
+
+type ProductDetailsDialogProps = {
+  result: SearchResult | null
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  onRelevant?: () => void
+  onIrrelevant?: () => void
+}
+
+export function ProductDetailsDialog({
+  result,
+  open,
+  onOpenChange,
+  onRelevant,
+  onIrrelevant,
+}: ProductDetailsDialogProps) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="w-[min(960px,calc(100vw-2rem))] max-w-none overflow-hidden p-0">
+        {result ? (
+          <div className="max-h-[calc(100vh-2rem)] overflow-x-hidden overflow-y-auto p-6">
+            <DialogHeader className="min-w-0">
+              <DialogTitle className="break-words text-2xl [overflow-wrap:anywhere]">
+                {result.product.title}
+              </DialogTitle>
+              <DialogDescription className="break-words [overflow-wrap:anywhere]">
+                {result.product.category}
+                {result.product.brandGuess ? ` • ${result.product.brandGuess}` : ''}
+                {result.product.modelGuess ? ` • ${result.product.modelGuess}` : ''}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="mt-6 grid min-w-0 gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="min-w-0 space-y-4">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
+                    Описание
+                  </div>
+                  <div className="mt-3 break-words text-sm leading-6 text-[var(--semantic-text-primary)] [overflow-wrap:anywhere]">
+                    {result.explanation}
+                  </div>
+                </div>
+
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
+                    Характеристики
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {result.product.attributes.map((attribute) => (
+                      <ProductBadge
+                        key={`${result.product.id}-${attribute.name}-${attribute.value}`}
+                        attribute={attribute}
+                      />
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-w-0 space-y-4">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)] p-5">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
+                    Общие сведения
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    <AppBadge tone="outline">{result.product.category}</AppBadge>
+                    {result.product.brandGuess ? (
+                      <AppBadge tone="subtle">{result.product.brandGuess}</AppBadge>
+                    ) : null}
+                    {result.product.modelGuess ? (
+                      <AppBadge tone="subtle">{result.product.modelGuess}</AppBadge>
+                    ) : null}
+                  </div>
+                </div>
+
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+                  <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
+                    Действия
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-2">
+                    {onRelevant ? <AppButton onClick={onRelevant}>Релевантно</AppButton> : null}
+                    {onIrrelevant ? (
+                      <AppButton variant="danger" onClick={onIrrelevant}>
+                        Не релевантно
+                      </AppButton>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+  )
+}

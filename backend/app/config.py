@@ -50,11 +50,24 @@ class Settings:
         self.DB_PATH = Path(
             os.getenv("DB_PATH", self.RUNTIME_DIR / "search.sqlite")
         ).resolve()
+        self.ARTIFACTS_DIR = Path(
+            os.getenv("ARTIFACTS_DIR", self.RUNTIME_DIR / "artifacts")
+        ).resolve()
+        self.ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
 
         self.SEARCH_CANDIDATES = int(os.getenv("SEARCH_CANDIDATES", "1500"))
         self.LEXICON_LIMIT = int(os.getenv("LEXICON_LIMIT", "5000"))
         self.JOB_WORKERS = int(os.getenv("JOB_WORKERS", "1"))
         self.METRICS_SAMPLE_SIZE = int(os.getenv("METRICS_SAMPLE_SIZE", "18"))
+        self.SPELLCHECK_MAX_EDIT_DISTANCE = int(
+            os.getenv("SPELLCHECK_MAX_EDIT_DISTANCE", "2")
+        )
+        self.SPELLCHECK_MAX_SUGGESTIONS = int(
+            os.getenv("SPELLCHECK_MAX_SUGGESTIONS", "6")
+        )
+        self.SYNONYM_MAX_ALIASES = int(os.getenv("SYNONYM_MAX_ALIASES", "4"))
+        self.RANKER_CANDIDATES = int(os.getenv("RANKER_CANDIDATES", "200"))
+        self.RANKER_ENABLED = _read_bool("RANKER_ENABLED", True)
 
         self.LLM_ENABLED = _read_bool("LLM_ENABLED", False)
         self.LLM_PROVIDER = os.getenv("LLM_PROVIDER", "local_qwen")

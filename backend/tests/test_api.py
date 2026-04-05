@@ -129,6 +129,33 @@ def test_search_handles_typos_and_synonyms(client, ste_csv, contracts_csv):
     assert payload["correctedQuery"].split()[1] == "smartbuy"
     assert any(item["to"] == "smartbuy" for item in payload["queryInterpretation"]["typoCorrections"])
     assert any(item["to"] == "usb" for item in payload["queryInterpretation"]["synonymMappings"])
+    assert "lemmaMappings" in payload["queryInterpretation"]
+    assert "spellCandidates" in payload["queryInterpretation"]
+    assert "protectedTokens" in payload["queryInterpretation"]
+    assert "16" in payload["queryInterpretation"]["protectedTokens"]
+
+
+def test_search_corrects_common_russian_typos(client, ste_csv, contracts_csv):
+    extra_row = (
+        "4001;Рабочая тетрадь А4 48 листов;Канцелярия;"
+        "\"Формат:А4;Количество листов:48;Тип:тетрадь\"\n"
+    ).encode("utf-8")
+    _upload_test_dataset(client, ste_csv + extra_row, contracts_csv)
+
+    response = client.post(
+        "/search",
+        json={
+            "query": "ребочая тетрадь",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["product"]["id"] == "4001"
+    assert payload["correctedQuery"].startswith("рабочая")
+    assert any(item["to"] == "рабочая" for item in payload["queryInterpretation"]["typoCorrections"])
 
 
 def test_duplicate_ste_rows_do_not_create_duplicate_search_results(
@@ -203,12 +230,40 @@ def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
     profiles = client.get("/profiles/demo")
     assert profiles.status_code == 200
     assert len(profiles.json()) >= 1
+    assert any(profile["customerId"] == "__new_customer__" for profile in profiles.json())
 
     metrics = client.get("/metrics/summary")
     assert metrics.status_code == 200
     payload = metrics.json()
     assert "baseline" in payload
     assert "personalized" in payload
+    assert "ndcg10" in payload["baseline"]
+    assert "ndcgAt10" in payload["baseline"]
+    assert "mrr10" in payload["personalized"]
+    assert "mrrAt10" in payload["personalized"]
+    assert "isReliable" in payload["dataset"]
+    assert "evaluationQueries" in payload["dataset"]
+
+
+def test_cold_start_profile_returns_popular_recommendations(client, ste_csv, contracts_csv):
+    _upload_test_dataset(client, ste_csv, contracts_csv)
+
+    response = client.post(
+        "/search/recommendations",
+        json={
+            "customerId": "__new_customer__",
+            "sessionId": "feed-cold-start",
+            "limit": 6,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["parserSource"] == "cold_start_feed"
+    assert payload["profileSummary"]["customerId"] == "__new_customer__"
+    assert payload["profileSummary"]["purchaseCount"] == 0
+    assert len(payload["results"]) > 0
 
 
 def test_bootstrap_default_dataset_and_clear_endpoint(
