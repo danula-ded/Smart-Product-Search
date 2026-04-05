@@ -1,12 +1,6 @@
-import type { ReactNode } from 'react'
-import {
-  Bookmark,
-  CornerUpLeft,
-  Eye,
-  Info,
-  ThumbsDown,
-  ThumbsUp,
-} from 'lucide-react'
+import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { Bookmark, CornerUpLeft, Eye, Info, ThumbsDown, ThumbsUp } from 'lucide-react'
 
 import type { SearchResult } from '@/entities/product/model/types'
 import { CategoryTag } from '@/entities/category'
@@ -55,10 +49,15 @@ function ActionIconButton({
   variant = 'outline',
   onClick,
 }: ActionIconButtonProps) {
+  function handleClick(event: MouseEvent<HTMLButtonElement>) {
+    event.stopPropagation()
+    onClick()
+  }
+
   return (
     <Tooltip>
       <TooltipTrigger asChild>
-        <AppButton size="icon-sm" variant={variant} aria-label={label} onClick={onClick}>
+        <AppButton size="icon-sm" variant={variant} aria-label={label} onClick={handleClick}>
           {icon}
         </AppButton>
       </TooltipTrigger>
@@ -83,29 +82,41 @@ export function ProductCard({
   onSave,
   onDetails,
 }: ProductCardProps) {
+  const navigate = useNavigate()
+
+  function openProductPage() {
+    navigate(`/product/${result.product.id}`)
+  }
+
+  function handleCardKeyDown(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault()
+      openProductPage()
+    }
+  }
+
   return (
-    <AppCard className="h-full">
+    <AppCard
+      className="h-full cursor-pointer transition-colors duration-200 hover:border-[var(--semantic-border-strong)] hover:bg-[var(--semantic-background-elevated)]"
+      role="link"
+      tabIndex={0}
+      onClick={openProductPage}
+      onKeyDown={handleCardKeyDown}
+    >
       <AppCardHeader className="space-y-4">
-        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col gap-3">
           <div className="min-w-0 space-y-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <AppBadge tone="outline">#{position}</AppBadge>
-              <CategoryTag>{result.product.category}</CategoryTag>
-              {result.product.brandGuess ? (
-                <AppBadge tone="subtle">{result.product.brandGuess}</AppBadge>
-              ) : null}
-            </div>
             <div className="space-y-2">
-              <AppCardTitle className="text-balance text-lg leading-7">
+              <AppCardTitle className="text-lg leading-7 break-words">
                 {result.product.title}
               </AppCardTitle>
-              <AppCardDescription className="max-w-[72ch] leading-6">
+              <AppCardDescription className="max-w-[72ch] break-words leading-6">
                 {result.explanation}
               </AppCardDescription>
             </div>
           </div>
 
-          <AppCardAction className="flex max-w-[220px] flex-wrap items-start justify-end gap-1.5">
+          <AppCardAction className="flex flex-wrap items-start gap-1.5 self-start">
             <ActionIconButton
               label={searchActionDetails.open.label}
               description={searchActionDetails.open.description}
@@ -156,21 +167,6 @@ export function ProductCard({
           </AppCardAction>
         </div>
       </AppCardHeader>
-
-      <AppCardContent className="space-y-4">
-        <div className="flex flex-wrap gap-2">
-          {result.product.attributes.slice(0, 5).map((attribute) => (
-            <ProductBadge
-              key={`${result.product.id}-${attribute.name}-${attribute.value}`}
-              attribute={attribute}
-            />
-          ))}
-        </div>
-
-        <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-4 text-sm leading-6 text-[var(--semantic-text-secondary)]">
-          Подробные характеристики и расширенное описание доступны в карточке товара.
-        </div>
-      </AppCardContent>
     </AppCard>
   )
 }

@@ -38,11 +38,8 @@ export function ProductListSection({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-lg font-semibold text-[var(--semantic-text-primary)]">Выдача</div>
           <div className="text-sm text-[var(--semantic-text-secondary)]">
-            {searchState
-              ? `${formatNumber(searchState.totalCount)} результатов, страница ${formatNumber(currentPage)} из ${formatNumber(totalPages)}`
-              : 'Сначала выполните поиск.'}
+            {!searchState &&  'Сначала выполните поиск.'}
           </div>
         </div>
       </div>

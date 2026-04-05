@@ -1,6 +1,5 @@
 import type { SearchResult } from '@/entities/product/model/types'
-import { AppBadge, AppButton } from '@/shared/ui'
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/shared/ui'
+import { AppBadge, AppButton, Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/shared/ui'
 
 import { ProductBadge } from './ProductBadge'
 
@@ -21,30 +20,32 @@ export function ProductDetailsDialog({
 }: ProductDetailsDialogProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="w-[min(1280px,calc(100vw-2rem))] max-w-none p-0">
+      <DialogContent className="w-[min(960px,calc(100vw-2rem))] max-w-none overflow-hidden p-0">
         {result ? (
-          <div className="max-h-[calc(100vh-2rem)] overflow-y-auto p-6">
-            <DialogHeader>
-              <DialogTitle className="text-2xl">{result.product.title}</DialogTitle>
-              <DialogDescription>
+          <div className="max-h-[calc(100vh-2rem)] overflow-x-hidden overflow-y-auto p-6">
+            <DialogHeader className="min-w-0">
+              <DialogTitle className="break-words text-2xl [overflow-wrap:anywhere]">
+                {result.product.title}
+              </DialogTitle>
+              <DialogDescription className="break-words [overflow-wrap:anywhere]">
                 {result.product.category}
                 {result.product.brandGuess ? ` • ${result.product.brandGuess}` : ''}
                 {result.product.modelGuess ? ` • ${result.product.modelGuess}` : ''}
               </DialogDescription>
             </DialogHeader>
 
-            <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-              <div className="space-y-4">
-                <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+            <div className="mt-6 grid min-w-0 gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+              <div className="min-w-0 space-y-4">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
                     Описание
                   </div>
-                  <div className="mt-3 text-sm leading-6 text-[var(--semantic-text-primary)]">
+                  <div className="mt-3 break-words text-sm leading-6 text-[var(--semantic-text-primary)] [overflow-wrap:anywhere]">
                     {result.explanation}
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
                     Характеристики
                   </div>
@@ -59,8 +60,8 @@ export function ProductDetailsDialog({
                 </div>
               </div>
 
-              <div className="space-y-4">
-                <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)] p-5">
+              <div className="min-w-0 space-y-4">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
                     Общие сведения
                   </div>
@@ -75,14 +76,12 @@ export function ProductDetailsDialog({
                   </div>
                 </div>
 
-                <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
+                <div className="min-w-0 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-5">
                   <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
                     Действия
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {onRelevant ? (
-                      <AppButton onClick={onRelevant}>Релевантно</AppButton>
-                    ) : null}
+                    {onRelevant ? <AppButton onClick={onRelevant}>Релевантно</AppButton> : null}
                     {onIrrelevant ? (
                       <AppButton variant="danger" onClick={onIrrelevant}>
                         Не релевантно
