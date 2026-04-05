@@ -106,6 +106,37 @@ export function ProductCard({
       <AppCardHeader className="space-y-4">
         <div className="flex min-w-0 flex-col gap-3">
           <div className="min-w-0 space-y-3">
+            <div className="flex flex-wrap items-start gap-2">
+              <AppBadge tone="outline">#{position}</AppBadge>
+              <CategoryTag className="min-w-0 max-w-full sm:max-w-[calc(100%-3.5rem)]">
+                {result.product.category}
+              </CategoryTag>
+              {result.product.brandGuess ? (
+                <AppBadge
+                  tone="subtle"
+                  className="min-w-0 max-w-full sm:max-w-[calc(100%-3.5rem)]"
+                  title={result.product.brandGuess}
+                >
+                  <span className="truncate">{result.product.brandGuess}</span>
+                </AppBadge>
+              ) : null}
+              {result.product.modelGuess ? (
+                <AppBadge
+                  tone="subtle"
+                  className="min-w-0 max-w-full sm:max-w-[calc(100%-3.5rem)]"
+                  title={result.product.modelGuess}
+                >
+                  <span className="truncate">{result.product.modelGuess}</span>
+                </AppBadge>
+              ) : null}
+              {result.product.attributes.slice(0, 2).map((attribute) => (
+                <ProductBadge
+                  key={`${result.product.id}-${attribute.name}-${attribute.value}`}
+                  attribute={attribute}
+                />
+              ))}
+            </div>
+
             <div className="space-y-2">
               <AppCardTitle className="text-lg leading-7 break-words">
                 {result.product.title}

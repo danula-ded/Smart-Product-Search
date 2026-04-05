@@ -36,7 +36,7 @@ export function FilterPanel({
         </AppButton>
       </div>
 
-      <ScrollArea className="h-[560px] pr-3">
+      <ScrollArea className="h-[min(560px,70vh)] pr-3">
         <div className="space-y-5">
           <div className="space-y-2">
             <div className="text-sm font-semibold text-[var(--semantic-text-primary)]">Категории</div>

@@ -1,16 +1,23 @@
+import type { ReactNode } from 'react'
+import { ChevronDown, Filter } from 'lucide-react'
+
 import type { SearchResult } from '@/entities/product'
 import type { SearchResponse } from '@/shared/api'
 import { SearchPagination } from '@/features/search-pagination'
 import { formatNumber } from '@/shared/lib/format'
-import { AppBadge, EmptyState } from '@/shared/ui'
+import { AppBadge, AppButton, EmptyState } from '@/shared/ui'
 import { ProductGrid } from '@/widgets/ProductGrid'
 
 type ProductListSectionProps = {
   searchState: SearchResponse | null
   isFeedMode?: boolean
   searching: boolean
+  activeFilterCount: number
+  filtersOpen: boolean
+  filterPanel?: ReactNode
   currentPage: number
   totalPages: number
+  onToggleFilters: () => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
   onOpen: (result: SearchResult, position: number) => void
@@ -25,8 +32,12 @@ export function ProductListSection({
   searchState,
   isFeedMode = false,
   searching,
+  activeFilterCount,
+  filtersOpen,
+  filterPanel,
   currentPage,
   totalPages,
+  onToggleFilters,
   onPageChange,
   onPageSizeChange,
   onOpen,
@@ -54,19 +65,48 @@ export function ProductListSection({
           <div className="text-lg font-semibold text-[var(--semantic-text-primary)]">{title}</div>
           <div className="text-sm text-[var(--semantic-text-secondary)]">{subtitle}</div>
         </div>
-        {searchState ? (
-          <div className="flex flex-wrap gap-2">
-            <AppBadge tone="outline">Нормализация {searchState.timingsMs.normalize} ms</AppBadge>
-            <AppBadge tone="outline">Поиск {searchState.timingsMs.retrieve} ms</AppBadge>
-            <AppBadge tone="outline">
-              Переранжирование {searchState.timingsMs.rerank} ms
-            </AppBadge>
-            <AppBadge>
-              {isFeedMode ? 'Подборка' : 'Всего'} {searchState.timingsMs.total} ms
-            </AppBadge>
-          </div>
-        ) : null}
+
+        <div className="flex flex-wrap items-center gap-2">
+          {!isFeedMode ? (
+            <AppButton
+              variant={filtersOpen || activeFilterCount > 0 ? 'accent' : 'outline'}
+              size="sm"
+              className="gap-2"
+              aria-expanded={filtersOpen}
+              aria-controls="catalog-filters-panel"
+              onClick={onToggleFilters}
+            >
+              <Filter className="size-4" />
+              Фильтры
+              {activeFilterCount > 0 ? (
+                <AppBadge tone="primary">{activeFilterCount}</AppBadge>
+              ) : null}
+              <ChevronDown
+                className={`size-4 transition-transform duration-200 ${
+                  filtersOpen ? 'rotate-180' : ''
+                }`}
+              />
+            </AppButton>
+          ) : null}
+
+          {searchState ? (
+            <div className="flex flex-wrap gap-2">
+              <AppBadge tone="outline">
+                Нормализация {searchState.timingsMs.normalize} ms
+              </AppBadge>
+              <AppBadge tone="outline">Поиск {searchState.timingsMs.retrieve} ms</AppBadge>
+              <AppBadge tone="outline">
+                Переранжирование {searchState.timingsMs.rerank} ms
+              </AppBadge>
+              <AppBadge>
+                {isFeedMode ? 'Подборка' : 'Всего'} {searchState.timingsMs.total} ms
+              </AppBadge>
+            </div>
+          ) : null}
+        </div>
       </div>
+
+      {!isFeedMode ? filterPanel : null}
 
       {searchState ? (
         <SearchPagination

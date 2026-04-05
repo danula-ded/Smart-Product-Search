@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Database } from 'lucide-react'
 
 import type { SearchResult } from '@/entities/product'
@@ -96,6 +97,8 @@ export function CatalogSection({
   onSave,
   onDetails,
 }: CatalogSectionProps) {
+  const [filtersOpen, setFiltersOpen] = useState(false)
+
   return (
     <section className="space-y-4">
       <SectionTitle
@@ -135,30 +138,29 @@ export function CatalogSection({
           description="После подготовки базы здесь появятся строка поиска, персональная витрина, фильтры и результаты по продукции."
         />
       ) : (
-        <div
-          className={
-            isFeedMode
-              ? 'grid gap-6'
-              : 'grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]'
-          }
-        >
-          {!isFeedMode ? (
-            <CatalogFilters
-              activeFilterCount={activeFilterCount}
-              filters={filters}
-              categoryFacets={categoryFacets}
-              brandFacets={brandFacets}
-              attributeFacets={attributeFacets}
-              profileSummary={profileSummary}
-              onFilterToggle={onFilterToggle}
-              onClearAll={onClearAll}
-            />
-          ) : null}
-
+        <div className="space-y-4">
           <ProductListSection
             searchState={searchState}
             isFeedMode={isFeedMode}
             searching={searching}
+            activeFilterCount={activeFilterCount}
+            filtersOpen={filtersOpen}
+            onToggleFilters={() => setFiltersOpen((current) => !current)}
+            filterPanel={
+              !isFeedMode ? (
+                <CatalogFilters
+                  open={filtersOpen}
+                  activeFilterCount={activeFilterCount}
+                  filters={filters}
+                  categoryFacets={categoryFacets}
+                  brandFacets={brandFacets}
+                  attributeFacets={attributeFacets}
+                  profileSummary={profileSummary}
+                  onFilterToggle={onFilterToggle}
+                  onClearAll={onClearAll}
+                />
+              ) : null
+            }
             currentPage={currentPage}
             totalPages={totalPages}
             onPageChange={onPageChange}

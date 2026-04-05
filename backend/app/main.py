@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from pathlib import PurePosixPath
 import warnings
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.datastructures import Headers
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.api import router
 from app.config import settings
@@ -24,6 +26,34 @@ if UnsupportedFieldAttributeWarning is not None:
     warnings.filterwarnings("ignore", category=UnsupportedFieldAttributeWarning)
 else:  # pragma: no cover
     warnings.filterwarnings("ignore", message=".*FieldAttributeWarning.*")
+
+
+class SPAStaticFiles(StaticFiles):
+    """Serve built frontend assets and fall back to index.html for SPA routes."""
+
+    async def get_response(self, path: str, scope):
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            if exc.status_code != 404 or not self._should_serve_index(path, scope):
+                raise
+            return await super().get_response("index.html", scope)
+
+    @staticmethod
+    def _should_serve_index(path: str, scope) -> bool:
+        if scope.get("method") not in {"GET", "HEAD"}:
+            return False
+
+        headers = Headers(scope=scope)
+        accepts = headers.get("accept", "")
+        if "text/html" not in accepts:
+            return False
+
+        normalized_path = path.strip("/")
+        if not normalized_path:
+            return True
+
+        return PurePosixPath(normalized_path).suffix == ""
 
 
 def initialize_app_state(app: FastAPI) -> RuntimeServices:
@@ -68,36 +98,8 @@ app.include_router(router)
 
 
 frontend_dist = settings.PROJECT_ROOT / "frontend" / "dist"
-frontend_index = frontend_dist / "index.html"
-
 if frontend_dist.exists():
-    for asset_name in (
-        "assets",
-        "android-chrome-192x192.png",
-        "android-chrome-512x512.png",
-        "apple-touch-icon.png",
-        "favicon-16x16.png",
-        "favicon-32x32.png",
-        "favicon.ico",
-        "site.webmanifest",
-    ):
-        asset_path = frontend_dist / asset_name
-        if asset_path.is_dir():
-            app.mount(f"/{asset_name}", StaticFiles(directory=asset_path), name=f"frontend-{asset_name}")
-        elif asset_path.is_file():
-            route_path = f"/{asset_name}"
-
-            @app.get(route_path, include_in_schema=False)
-            async def serve_frontend_asset(asset_path=asset_path):
-                return FileResponse(asset_path)
-
-    @app.get("/", include_in_schema=False)
-    async def serve_frontend_index():
-        return FileResponse(frontend_index)
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def serve_frontend_spa(full_path: str):
-        return FileResponse(frontend_index)
+    app.mount("/", SPAStaticFiles(directory=frontend_dist, html=True), name="frontend")
 
 
 def custom_openapi():
