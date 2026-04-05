@@ -20,11 +20,11 @@ export function Header({ health, loadingData, onRefresh }: HeaderProps) {
             {loadingData ? <AppBadge tone="info">Обновляем состояние</AppBadge> : null}
           </div>
           <div className="text-2xl font-semibold tracking-tight text-[var(--semantic-text-primary)]">
-            Каталог и персонализация в единой бренд-системе
+            Умный поиск продукции для закупок
           </div>
           <div className="max-w-[72ch] text-sm leading-6 text-[var(--semantic-text-secondary)]">
-            FSD-структура, единая цветовая палитра и production-ready интерфейс для поиска,
-            профилей, динамической выдачи и работы с данными.
+            Поиск, персонализированная витрина, динамическая перестройка выдачи и работа с датасетом
+            в одном интерфейсе.
           </div>
         </div>
 

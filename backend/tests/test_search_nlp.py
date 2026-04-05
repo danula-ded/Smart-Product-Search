@@ -78,3 +78,31 @@ def test_query_understanding_service_uses_dictionary_and_synonyms(tmp_path):
     assert result.layout_corrections
     assert result.typo_corrections
     assert result.spell_candidates
+
+
+def test_query_understanding_does_not_overcorrect_known_russian_words(tmp_path):
+    db = SQLiteDatabase(tmp_path / "search.sqlite")
+    timestamp = utcnow_iso()
+    with db.connect() as connection:
+        cursor = connection.cursor()
+        cursor.executemany(
+            """
+            INSERT INTO term_dictionary (term, lemma, doc_freq, term_type, source_mask, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                ("бакалея", "бакалея", 150, "token", 1, timestamp),
+                ("рабочая", "рабочий", 200, "token", 1, timestamp),
+            ],
+        )
+        connection.commit()
+
+    service = QueryUnderstandingService(db)
+
+    battery = service.parse("батарея")
+    assert battery.corrected_tokens == ["батарея"]
+    assert not battery.typo_corrections
+
+    notebook = service.parse("ребочая")
+    assert notebook.corrected_tokens == ["рабочая"]
+    assert notebook.typo_corrections[0]["to"] == "рабочая"

@@ -107,6 +107,12 @@ class MetricsService:
                 "profiles": counts["profiles_count"] if counts else 0,
                 "events": counts["events_count"] if counts else 0,
                 "evaluationQueries": query_count,
+                "isReliable": query_count >= 10,
+                "sampleWarning": (
+                    None
+                    if query_count >= 10
+                    else "Метрики рассчитаны по слишком маленькой выборке и подходят только для грубой проверки."
+                ),
             },
             "baseline": self._finalize_metrics(baseline_scores),
             "personalized": self._finalize_metrics(personalized_scores),

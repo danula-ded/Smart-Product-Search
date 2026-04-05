@@ -200,15 +200,27 @@ class SpellcheckService:
         else:
             type_score = 1.0 if candidate_type == requested_type else 0.75
         if token[:2] and token[:2] == candidate[:2]:
-            context_score = 1.0
+            prefix_score = 1.0
         elif token[:1] and token[:1] == candidate[:1]:
-            context_score = 0.9
+            prefix_score = 0.82
         else:
-            context_score = 0.35
+            prefix_score = 0.2
+        if token[-2:] and token[-2:] == candidate[-2:]:
+            suffix_score = 1.0
+        elif token[-1:] and token[-1:] == candidate[-1:]:
+            suffix_score = 0.8
+        else:
+            suffix_score = 0.35
+        length_score = max(
+            0.0,
+            1.0 - (abs(len(token) - len(candidate)) / max(len(token), len(candidate), 1)),
+        )
         total = (
-            0.40 * edit_confidence
-            + 0.25 * frequency_score
-            + 0.20 * type_score
-            + 0.15 * context_score
+            0.42 * edit_confidence
+            + 0.20 * frequency_score
+            + 0.18 * type_score
+            + 0.10 * prefix_score
+            + 0.05 * suffix_score
+            + 0.05 * length_score
         )
         return round(total, 4)

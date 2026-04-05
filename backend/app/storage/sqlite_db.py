@@ -375,3 +375,16 @@ class SQLiteDatabase:
                 ),
             )
             connection.commit()
+
+    def optimize(self) -> None:
+        with self.connect() as connection:
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            connection.execute("PRAGMA optimize;")
+
+    def compact(self) -> None:
+        with self.connect() as connection:
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            connection.execute("VACUUM;")
+            connection.execute("PRAGMA optimize;")

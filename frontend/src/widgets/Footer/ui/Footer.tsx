@@ -11,17 +11,17 @@ export function Footer({ health }: FooterProps) {
       <AppCardContent className="flex flex-col gap-3 py-1 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
           <div className="text-sm font-semibold text-[var(--semantic-text-primary)]">
-            Smart Product Search Frontend
+            Smart Product Search
           </div>
           <div className="text-sm text-[var(--semantic-text-secondary)]">
-            Brand-driven UI, FSD architecture and reusable design system tokens.
+            Прототип для демонстрации поиска, персонализации и загрузки данных без внешних API.
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-3">
           <AppBadge tone={health?.status === 'healthy' ? 'accent' : 'danger'}>
             {health?.status ?? 'offline'}
           </AppBadge>
-          <AppBadge tone="outline">backend {health?.version ?? 'n/a'}</AppBadge>
+          <AppBadge tone="outline">Версия {health?.version ?? 'n/a'}</AppBadge>
           <AppLink href="#top">Наверх</AppLink>
         </div>
       </AppCardContent>

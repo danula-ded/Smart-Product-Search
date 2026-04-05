@@ -42,6 +42,9 @@ export type QueryInterpretation = {
   layoutCorrections: Array<Record<string, unknown>>;
   typoCorrections: Array<Record<string, unknown>>;
   synonymMappings: Array<Record<string, unknown>>;
+  lemmaMappings?: Array<Record<string, unknown>>;
+  spellCandidates?: Array<Record<string, unknown>>;
+  protectedTokens?: string[];
 };
 
 export type ProfileSummary = {
@@ -131,10 +134,31 @@ export type DatasetSummary = {
   imports: DatasetJob[];
 };
 
+export type MetricsDatasetSummary = {
+  products: number;
+  contracts: number;
+  profiles: number;
+  events?: number;
+  evaluationQueries: number;
+  isReliable: boolean;
+  sampleWarning?: string | null;
+};
+
+export type MetricsBucket = {
+  ndcg10: number;
+  ndcgAt10: number;
+  mrr10: number;
+  mrrAt10: number;
+  recall20: number;
+  recallAt20: number;
+  success5: number;
+  successAt5: number;
+};
+
 export type MetricsSummary = {
-  dataset: Record<string, number>;
-  baseline: Record<string, number>;
-  personalized: Record<string, number>;
+  dataset: MetricsDatasetSummary;
+  baseline: MetricsBucket;
+  personalized: MetricsBucket;
 };
 
 export type Health = {

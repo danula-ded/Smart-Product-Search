@@ -55,3 +55,19 @@ class MorphologyService:
     def is_russian_word(self, token: str) -> bool:
         normalized = normalize_text(token)
         return bool(normalized and CYRILLIC_ONLY_RE.match(normalized))
+
+    @lru_cache(maxsize=32768)
+    def is_known_word(self, token: str) -> bool:
+        normalized = normalize_text(token)
+        if not normalized or not CYRILLIC_ONLY_RE.match(normalized):
+            return False
+        if self._analyzer is None:
+            return False
+        try:
+            parsed = self._analyzer.parse(normalized)
+        except Exception:
+            return False
+        for item in parsed[:3]:
+            if bool(getattr(item, "is_known", False)):
+                return True
+        return False

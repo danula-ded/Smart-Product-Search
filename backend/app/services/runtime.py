@@ -22,7 +22,7 @@ def build_runtime(db_path) -> RuntimeServices:
     db = SQLiteDatabase(db_path)
     db.mark_running_jobs_interrupted()
     search = SearchService(db)
-    datasets = DatasetService(db)
+    datasets = DatasetService(db, search)
     metrics = MetricsService(db, search)
+    search.prewarm()
     return RuntimeServices(db=db, datasets=datasets, search=search, metrics=metrics)
-

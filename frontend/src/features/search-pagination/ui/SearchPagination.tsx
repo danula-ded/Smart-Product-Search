@@ -16,6 +16,7 @@ type SearchPaginationProps = {
   currentPage: number
   totalPages: number
   pageSize: number
+  shownCount: number
   totalCount: number
   disabled?: boolean
   onPageChange: (page: number) => void
@@ -26,6 +27,7 @@ export function SearchPagination({
   currentPage,
   totalPages,
   pageSize,
+  shownCount,
   totalCount,
   disabled,
   onPageChange,
@@ -36,7 +38,7 @@ export function SearchPagination({
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-card)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="text-sm text-[var(--semantic-text-secondary)]">
-        {`Показано ${formatNumber(pageSize)} на странице, всего ${formatNumber(totalCount)}`}
+        {`Показано ${formatNumber(shownCount)} из ${formatNumber(totalCount)}`}
       </div>
 
       <div className="flex flex-wrap items-center gap-2">

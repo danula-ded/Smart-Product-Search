@@ -73,6 +73,7 @@ export function ProductListSection({
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={searchState.limit}
+          shownCount={searchState.results.length}
           totalCount={searchState.totalCount}
           disabled={searching}
           onPageChange={onPageChange}
@@ -98,6 +99,7 @@ export function ProductListSection({
           currentPage={currentPage}
           totalPages={totalPages}
           pageSize={searchState.limit}
+          shownCount={searchState.results.length}
           totalCount={searchState.totalCount}
           disabled={searching}
           onPageChange={onPageChange}

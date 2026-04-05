@@ -40,13 +40,13 @@ function MetricDeltaCard(props: {
       <AppCardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3 text-sm">
           <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3">
-            <div className="text-xs text-[var(--semantic-text-muted)]">Baseline</div>
+            <div className="text-xs text-[var(--semantic-text-muted)]">Без персонализации</div>
             <div className="mt-1 font-medium text-[var(--semantic-text-primary)]">
               {formatMetric(baseline)}
             </div>
           </div>
           <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3">
-            <div className="text-xs text-[var(--semantic-text-muted)]">Personalized</div>
+            <div className="text-xs text-[var(--semantic-text-muted)]">С персонализацией</div>
             <div className="mt-1 font-medium text-[var(--semantic-text-primary)]">
               {formatMetric(personalized)}
             </div>
@@ -95,6 +95,11 @@ export function MetricsSection({ metrics, metricsLoading }: MetricsSectionProps)
           </div>
         ) : metrics ? (
           <div className="space-y-6">
+            {!metrics.dataset.isReliable && metrics.dataset.sampleWarning ? (
+              <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-highlight)] px-4 py-3 text-sm leading-6 text-[var(--semantic-text-secondary)]">
+                {metrics.dataset.sampleWarning}
+              </div>
+            ) : null}
             <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
               <MetricDeltaCard
                 label="NDCG@10"
@@ -117,10 +122,14 @@ export function MetricsSection({ metrics, metricsLoading }: MetricsSectionProps)
                 personalized={metrics.personalized.successAt5}
               />
             </div>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 lg:grid-cols-4">
               <CompactStat label="Товаров" value={formatNumber(metrics.dataset.products)} />
               <CompactStat label="Контрактов" value={formatNumber(metrics.dataset.contracts)} />
               <CompactStat label="Профилей" value={formatNumber(metrics.dataset.profiles)} />
+              <CompactStat
+                label="Проверочных запросов"
+                value={formatNumber(metrics.dataset.evaluationQueries)}
+              />
             </div>
           </div>
         ) : (

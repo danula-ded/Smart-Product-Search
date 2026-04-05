@@ -14,7 +14,26 @@ function StatTile(props: { label: string; value: string }) {
   )
 }
 
+const statusLabels: Record<string, string> = {
+  queued: 'В очереди',
+  running: 'Выполняется',
+  successful: 'Успешно',
+  failed: 'Ошибка',
+  interrupted: 'Прервано',
+}
+
+const modeLabels: Record<string, string> = {
+  replace_all: 'Полная замена',
+  upsert_ste: 'Дозагрузка СТЕ',
+  append_contracts: 'Дозагрузка контрактов',
+  upsert_bundle: 'Дозагрузка обоих файлов',
+}
+
 export function DatasetStatusCard({ displayedJob }: DatasetStatusCardProps) {
+  const rawProgress = displayedJob?.progress ?? 0
+  const progressPercent = rawProgress <= 1 ? Math.round(rawProgress * 100) : Math.round(rawProgress)
+  const progressWidth = Math.max(4, Math.min(100, progressPercent))
+
   return (
     <div className="rounded-xl border border-[var(--semantic-border-default)] bg-[var(--semantic-background-card)] p-6">
       <div className="space-y-2">
@@ -28,20 +47,20 @@ export function DatasetStatusCard({ displayedJob }: DatasetStatusCardProps) {
         {displayedJob ? (
           <>
             <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-              <StatTile label="Job ID" value={displayedJob.jobId} />
-              <StatTile label="Статус" value={displayedJob.status} />
-              <StatTile label="Режим" value={displayedJob.mode} />
-              <StatTile label="Прогресс" value={`${Math.round(displayedJob.progress)}%`} />
+              <StatTile label="ID задачи" value={displayedJob.jobId} />
+              <StatTile label="Статус" value={statusLabels[displayedJob.status] ?? displayedJob.status} />
+              <StatTile label="Режим" value={modeLabels[displayedJob.mode] ?? displayedJob.mode} />
+              <StatTile label="Прогресс" value={`${progressPercent}%`} />
             </div>
             <div className="h-2 rounded-full bg-[var(--semantic-progress-track)]">
               <div
                 className="h-2 rounded-full bg-primary"
-                style={{ width: `${Math.max(4, Math.min(100, displayedJob.progress))}%` }}
+                style={{ width: `${progressWidth}%` }}
               />
             </div>
             {displayedJob.warnings.length > 0 ? (
               <div className="space-y-2 rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-highlight)] p-4">
-                <div className="text-sm font-semibold text-[var(--semantic-text-primary)]">Warnings</div>
+                <div className="text-sm font-semibold text-[var(--semantic-text-primary)]">Предупреждения</div>
                 <ul className="list-disc space-y-1 pl-5 text-sm text-[var(--semantic-text-secondary)]">
                   {displayedJob.warnings.map((warning) => (
                     <li key={warning}>{warning}</li>
@@ -51,7 +70,7 @@ export function DatasetStatusCard({ displayedJob }: DatasetStatusCardProps) {
             ) : null}
             {displayedJob.errors.length > 0 ? (
               <div className="space-y-2 rounded-lg border border-[var(--semantic-border-interactive)] bg-[var(--semantic-background-danger)] p-4">
-                <div className="text-sm font-semibold text-[var(--semantic-status-danger)]">Errors</div>
+                <div className="text-sm font-semibold text-[var(--semantic-status-danger)]">Ошибки</div>
                 <ul className="list-disc space-y-1 pl-5 text-sm text-[var(--semantic-status-danger)]">
                   {displayedJob.errors.map((message) => (
                     <li key={message}>{message}</li>
@@ -69,7 +88,7 @@ export function DatasetStatusCard({ displayedJob }: DatasetStatusCardProps) {
         {displayedJob ? (
           <div className="flex flex-wrap gap-2">
             <AppBadge tone="outline">{displayedJob.createdAt}</AppBadge>
-            <AppBadge tone="subtle">{displayedJob.status}</AppBadge>
+            <AppBadge tone="subtle">{statusLabels[displayedJob.status] ?? displayedJob.status}</AppBadge>
           </div>
         ) : null}
       </div>

@@ -86,9 +86,27 @@ class SearchService:
     def __init__(self, db: SQLiteDatabase) -> None:
         self.db = db
         self._popular_recommendation_rows: list[dict[str, Any]] = []
+        self._popular_recommendation_revision: tuple[int, int, str] | None = None
         self._query_understanding = QueryUnderstandingService(db)
         self._ranker_revision: str | None = None
         self._ranker = CatBoostRanker()
+
+    def invalidate_runtime_caches(self) -> None:
+        self._popular_recommendation_rows = []
+        self._popular_recommendation_revision = None
+        self._ranker_revision = None
+
+    def prewarm(self) -> None:
+        self._refresh_ranker_if_needed()
+        self._query_understanding.parse("флешка")
+        self.recommendations(
+            customer_id=None,
+            session_id=None,
+            limit=12,
+            offset=0,
+            include_debug=False,
+            track_event=False,
+        )
 
     def search(
         self,
@@ -683,7 +701,23 @@ class SearchService:
         return selected_entries
 
     def _load_popular_recommendation_rows(self, limit: int) -> list[dict[str, Any]]:
-        if len(self._popular_recommendation_rows) >= limit:
+        revision_row = self.db.query_one(
+            """
+            SELECT
+                (SELECT COUNT(*) FROM products) AS products_count,
+                (SELECT COUNT(*) FROM contracts WHERE matched_product = 1) AS matched_contracts_count,
+                COALESCE((SELECT MAX(updated_at) FROM products), '') AS products_revision
+            """
+        )
+        revision = (
+            int(revision_row["products_count"] if revision_row else 0),
+            int(revision_row["matched_contracts_count"] if revision_row else 0),
+            str(revision_row["products_revision"] if revision_row else ""),
+        )
+        if (
+            self._popular_recommendation_revision == revision
+            and len(self._popular_recommendation_rows) >= limit
+        ):
             return self._popular_recommendation_rows[:limit]
 
         query_limit = max(limit, 240)
@@ -710,6 +744,7 @@ class SearchService:
             [query_limit],
         )
         self._popular_recommendation_rows = [dict(row) for row in rows]
+        self._popular_recommendation_revision = revision
         return self._popular_recommendation_rows[:limit]
 
     def _merge_recommendation_rows(

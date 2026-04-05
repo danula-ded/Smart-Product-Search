@@ -241,6 +241,8 @@ def test_profiles_and_metrics_endpoints(client, ste_csv, contracts_csv):
     assert "ndcgAt10" in payload["baseline"]
     assert "mrr10" in payload["personalized"]
     assert "mrrAt10" in payload["personalized"]
+    assert "isReliable" in payload["dataset"]
+    assert "evaluationQueries" in payload["dataset"]
 
 
 def test_cold_start_profile_returns_popular_recommendations(client, ste_csv, contracts_csv):

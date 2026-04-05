@@ -19,6 +19,9 @@ from app.services.text_utils import (
 from app.storage.sqlite_db import SQLiteDatabase
 
 
+CYRILLIC_RANGE = ("а", "я")
+
+
 @dataclass
 class QueryUnderstandingResult:
     original_query: str
@@ -68,6 +71,7 @@ class QueryUnderstandingService:
             protected = self._is_protected_token(token, token_type)
             if protected:
                 protected_tokens.append(token)
+            token_is_known_word = self.morphology.is_known_word(token)
 
             resolved_token = token
             layout_variant = self._select_layout_variant(token, token_type)
@@ -108,7 +112,16 @@ class QueryUnderstandingService:
             replacement_mode = "exact"
             if suggestions:
                 best = suggestions[0]
-                if best.score >= 0.65:
+                known_word_outside_dictionary = (
+                    token_is_known_word
+                    and exact_meta is None
+                    and resolved_token == token
+                )
+                if self._can_apply_strong_correction(
+                    token=token,
+                    candidate=best,
+                    known_word_outside_dictionary=known_word_outside_dictionary,
+                ):
                     resolved_token = best.term
                     replacement_mode = "strong"
                     typo_entry = {
@@ -119,7 +132,11 @@ class QueryUnderstandingService:
                     }
                     corrections.append(typo_entry)
                     typo_corrections.append(typo_entry)
-                elif best.score >= 0.55:
+                elif self._can_apply_soft_expansion(
+                    token=token,
+                    candidate=best,
+                    known_word_outside_dictionary=known_word_outside_dictionary,
+                ):
                     replacement_mode = "soft"
                     retrieval_tokens.append(best.term)
 
@@ -129,12 +146,7 @@ class QueryUnderstandingService:
             )
             lemma = self.morphology.lemma(resolved_token, str(term_type))
             if lemma and lemma != resolved_token:
-                lemma_mappings.append(
-                    {
-                        "from": resolved_token,
-                        "to": lemma,
-                    }
-                )
+                lemma_mappings.append({"from": resolved_token, "to": lemma})
                 retrieval_tokens.append(lemma)
 
             corrected_tokens.append(resolved_token)
@@ -239,7 +251,7 @@ class QueryUnderstandingService:
         normalized = normalize_text(token)
         if len(normalized) < 4:
             return True
-        if token_type in {"brand", "model", "unit"}:
+        if token_type in {"model", "unit"}:
             return True
         if looks_like_unit(normalized):
             return True
@@ -260,10 +272,59 @@ class QueryUnderstandingService:
         variants.sort(key=lambda item: (-item[0], item[1]))
         return variants[0][1]
 
+    def _can_apply_strong_correction(
+        self,
+        *,
+        token: str,
+        candidate: SpellCandidate,
+        known_word_outside_dictionary: bool,
+    ) -> bool:
+        normalized_token = normalize_text(token)
+        normalized_candidate = normalize_text(candidate.term)
+        min_score = 0.75 if candidate.distance <= 1 else 0.82
+        if candidate.term_type == "brand":
+            min_score = min(min_score, 0.75)
+        if not normalized_candidate or candidate.score < min_score:
+            return False
+        if known_word_outside_dictionary:
+            return False
+        if normalized_token[:1] != normalized_candidate[:1]:
+            return False
+        if (
+            len(normalized_token) >= 6
+            and candidate.distance > 1
+            and normalized_token[:2] != normalized_candidate[:2]
+        ):
+            return False
+        if abs(len(normalized_token) - len(normalized_candidate)) > 2:
+            return False
+        return True
+
+    def _can_apply_soft_expansion(
+        self,
+        *,
+        token: str,
+        candidate: SpellCandidate,
+        known_word_outside_dictionary: bool,
+    ) -> bool:
+        normalized_token = normalize_text(token)
+        normalized_candidate = normalize_text(candidate.term)
+        if not normalized_candidate or candidate.score < 0.68:
+            return False
+        if normalized_token[:1] != normalized_candidate[:1]:
+            return False
+        if abs(len(normalized_token) - len(normalized_candidate)) > 2:
+            return False
+        if known_word_outside_dictionary and normalized_token[:3] != normalized_candidate[:3]:
+            return False
+        return True
+
     def _detect_layout_direction(self, source: str) -> str:
         normalized = normalize_text(source)
-        if any("a" <= char <= "z" for char in normalized) and not any("а" <= char <= "я" for char in normalized):
+        has_latin = any("a" <= char <= "z" for char in normalized)
+        has_cyrillic = any(CYRILLIC_RANGE[0] <= char <= CYRILLIC_RANGE[1] for char in normalized)
+        if has_latin and not has_cyrillic:
             return "en_to_ru"
-        if any("а" <= char <= "я" for char in normalized) and not any("a" <= char <= "z" for char in normalized):
+        if has_cyrillic and not has_latin:
             return "ru_to_en"
         return "mixed"

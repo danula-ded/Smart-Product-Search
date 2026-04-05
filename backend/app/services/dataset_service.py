@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import HTTPException, UploadFile
 
 from app.config import settings
+from app.services.search_service import SearchService
 from app.services.ranking.training_dataset import build_training_cases
 from app.services.search_nlp.morphology import MorphologyService
 from app.services.text_utils import (
@@ -101,8 +102,9 @@ class ImportStats:
 class DatasetService:
     """Owns upload jobs and data ingestion into SQLite."""
 
-    def __init__(self, db: SQLiteDatabase) -> None:
+    def __init__(self, db: SQLiteDatabase, search_service: SearchService | None = None) -> None:
         self.db = db
+        self.search_service = search_service
         self.executor = ThreadPoolExecutor(max_workers=settings.JOB_WORKERS)
         settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
         settings.ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -240,6 +242,9 @@ class DatasetService:
             self._clear_all(cursor)
             cursor.execute("DELETE FROM ingestion_jobs")
             connection.commit()
+        self.db.compact()
+        if self.search_service is not None:
+            self.search_service.invalidate_runtime_caches()
         return {"success": True}
 
     def _persist_upload(
@@ -352,6 +357,21 @@ class DatasetService:
                 stats.ranking_model_ready = self._train_or_refresh_ranker(cursor)
                 cursor.execute("DELETE FROM runtime_cache")
                 connection.commit()
+
+            try:
+                if mode == "replace_all":
+                    self.db.compact()
+                else:
+                    self.db.optimize()
+            except Exception as exc:
+                self._append_warning(
+                    warnings,
+                    f"Database compaction skipped: {exc}",
+                )
+
+            if self.search_service is not None:
+                self.search_service.invalidate_runtime_caches()
+                self.search_service.prewarm()
 
             self._update_job(
                 job_id,
