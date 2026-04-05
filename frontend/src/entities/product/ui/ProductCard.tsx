@@ -10,7 +10,6 @@ import {
   AppButton,
   AppCard,
   AppCardAction,
-  AppCardContent,
   AppCardDescription,
   AppCardHeader,
   AppCardTitle,
@@ -20,6 +19,16 @@ import {
 } from '@/shared/ui'
 
 import { ProductBadge } from './ProductBadge'
+
+const scoreSignalLabels: Record<string, string> = {
+  history_product: 'История по товару',
+  history_category: 'История по категории',
+  popular: 'Популярность',
+  exploration: 'Разнообразие выдачи',
+  history_tokens: 'Совпадение с профилем',
+  session_product: 'Сигнал сессии по товару',
+  session_category: 'Сигнал сессии по категории',
+}
 
 type ProductCardProps = {
   result: SearchResult
@@ -72,6 +81,44 @@ function ActionIconButton({
   )
 }
 
+type ScoreBadgeProps = {
+  result: SearchResult
+}
+
+function ScoreBadge({ result }: ScoreBadgeProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <AppBadge tone="info" className="cursor-help">
+          {result.score.toFixed(3)}
+        </AppBadge>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" className="max-w-[360px] whitespace-normal">
+        <div className="space-y-3">
+          <div className="space-y-1">
+            <div className="font-medium">Score: {result.score.toFixed(3)}</div>
+            <div className="text-[11px] leading-5 text-white/80">{result.explanation}</div>
+          </div>
+
+          {result.scoreBreakdown && result.scoreBreakdown.length > 0 ? (
+            <div className="space-y-2">
+              {result.scoreBreakdown.map((item, index) => (
+                <div key={`${item.type}-${index}`} className="space-y-1">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="font-medium">{scoreSignalLabels[item.type] ?? item.type}</span>
+                    <span className="text-[11px] text-white/80">{item.value.toFixed(4)}</span>
+                  </div>
+                  <div className="text-[11px] leading-5 text-white/80">{item.reason}</div>
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </div>
+      </TooltipContent>
+    </Tooltip>
+  )
+}
+
 export function ProductCard({
   result,
   position,
@@ -105,12 +152,13 @@ export function ProductCard({
     >
       <AppCardHeader className="space-y-4">
         <div className="flex min-w-0 flex-col gap-3">
-          <div className="min-w-0 space-y-3">
-            <div className="flex flex-wrap items-start gap-2">
-              <AppBadge tone="outline">#{position}</AppBadge>
-              <CategoryTag className="min-w-0 max-w-full sm:max-w-[calc(100%-3.5rem)]">
-                {result.product.category}
-              </CategoryTag>
+            <div className="min-w-0 space-y-3">
+              <div className="flex flex-wrap items-start gap-2">
+                <AppBadge tone="outline">#{position}</AppBadge>
+                <ScoreBadge result={result} />
+                <CategoryTag className="min-w-0 max-w-full sm:max-w-[calc(100%-3.5rem)]">
+                  {result.product.category}
+                </CategoryTag>
               {result.product.brandGuess ? (
                 <AppBadge
                   tone="subtle"

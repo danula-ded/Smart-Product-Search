@@ -70,9 +70,17 @@ export type SearchFacetGroup = {
 };
 
 export type SearchFacets = {
-  categories: SearchFacetBucket[];
-  brands: SearchFacetBucket[];
-  attributes: SearchFacetGroup[];
+  categories?: SearchFacetBucket[];
+  brands?: SearchFacetBucket[];
+  attributes?: SearchFacetGroup[];
+};
+
+export type SearchParserSourceDetails = {
+  queryUnderstanding?: string;
+  retrieval?: string;
+  ranking?: string;
+  feedMode?: boolean;
+  [key: string]: unknown;
 };
 
 export type SearchResponse = {
@@ -83,6 +91,8 @@ export type SearchResponse = {
   searchTermsUsed: string[];
   queryInterpretation: QueryInterpretation;
   parserSource: string;
+  parserSourceDetails?: SearchParserSourceDetails | null;
+  rankingModelVersion?: string | null;
   profileSummary?: ProfileSummary | null;
   results: SearchResult[];
   facets: SearchFacets;
@@ -101,6 +111,7 @@ export type SearchAnalysisResponse = {
   searchTermsUsed: string[];
   queryInterpretation: QueryInterpretation;
   parserSource: string;
+  parserSourceDetails?: SearchParserSourceDetails | null;
 };
 
 export type DemoProfile = {
