@@ -1,14 +1,9 @@
 import type { ReactNode } from 'react'
-import { Database, FolderSync, Layers3, ListChecks } from 'lucide-react'
+import { Database, FolderSync, ListChecks } from 'lucide-react'
 
 import { useWorkspace } from '@/shared/lib/workspace'
 import { formatNumber } from '@/shared/lib/format'
-import {
-  AppCard,
-  AppCardContent,
-  AppCardHeader,
-  SectionTitle,
-} from '@/shared/ui'
+import { AppCard, AppCardContent, AppCardHeader, SectionTitle } from '@/shared/ui'
 import { DataSection } from '@/widgets/DataSection'
 
 function DataMetricCard(props: {
@@ -32,7 +27,7 @@ function DataMetricCard(props: {
               {props.description}
             </div>
           </div>
-          <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-2 text-[var(--semantic-icon-primary)]">
+          <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-2 text-[var(--semantic-icon-primary)] transition-colors duration-200 group-hover:border-[var(--semantic-border-strong)]">
             {props.icon}
           </div>
         </div>
@@ -57,7 +52,7 @@ export function DataPage() {
         </div>
       ) : null}
 
-      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <DataMetricCard
           title="Товаров"
           value={formatNumber(model.summary?.counts.products)}
@@ -69,12 +64,6 @@ export function DataPage() {
           value={formatNumber(model.summary?.counts.contracts)}
           description="История закупок, используемая при персонализации."
           icon={<FolderSync className="size-5" />}
-        />
-        <DataMetricCard
-          title="Профилей"
-          value={formatNumber(model.summary?.counts.profiles)}
-          description="Количество доступных профилей заказчиков."
-          icon={<Layers3 className="size-5" />}
         />
         <DataMetricCard
           title="Импортов"

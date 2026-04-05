@@ -2,13 +2,7 @@ import { ArrowRight } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
 import { useWorkspace } from '@/shared/lib/workspace'
-import {
-  AppButton,
-  AppCard,
-  AppCardContent,
-  AppCardHeader,
-  SectionTitle,
-} from '@/shared/ui'
+import { AppButton, AppCard, AppCardContent, AppCardHeader, SectionTitle } from '@/shared/ui'
 import { OverviewSection } from '@/widgets/OverviewSection'
 
 export function DashboardPage() {
@@ -29,16 +23,10 @@ export function DashboardPage() {
             description="Основные рабочие сценарии вынесены на отдельные страницы приложения."
           />
         </AppCardHeader>
-        <AppCardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-          <AppButton asChild variant="outline" className="justify-between">
-            <Link to="/search">
-              Перейти к поиску
-              <ArrowRight className="size-4" />
-            </Link>
-          </AppButton>
+        <AppCardContent className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           <AppButton asChild variant="outline" className="justify-between">
             <Link to="/catalog">
-              Открыть каталог
+              Открыть каталог и поиск
               <ArrowRight className="size-4" />
             </Link>
           </AppButton>

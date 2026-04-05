@@ -1,8 +1,16 @@
-import { RefreshCcw, Search } from 'lucide-react'
+import { RotateCcw, Search } from 'lucide-react'
 
 import type { DemoProfile } from '@/shared/api'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/shared/ui'
-import { AppButton, AppInput, Loader } from '@/shared/ui'
+import {
+  AppButton,
+  AppInput,
+  Loader,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/shared/ui'
 
 type SearchToolbarProps = {
   query: string
@@ -13,7 +21,7 @@ type SearchToolbarProps = {
   onQueryChange: (value: string) => void
   onProfileChange: (value: string) => void
   onSearch: () => void
-  onNewSession: () => void
+  onReset: () => void
 }
 
 export function SearchToolbar({
@@ -25,10 +33,10 @@ export function SearchToolbar({
   onQueryChange,
   onProfileChange,
   onSearch,
-  onNewSession,
+  onReset,
 }: SearchToolbarProps) {
   return (
-    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_280px_220px]">
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.4fr)_280px_340px]">
       <AppInput
         label="Запрос"
         value={query}
@@ -67,7 +75,7 @@ export function SearchToolbar({
         </Select>
       </div>
 
-      <div className="flex flex-col justify-end gap-2">
+      <div className="grid grid-cols-2 gap-3 self-end">
         <AppButton
           stretch
           disabled={!hasDataset || searching || query.trim().length === 0}
@@ -76,9 +84,10 @@ export function SearchToolbar({
           {searching ? <Loader label="Ищем" sizeClassName="size-4" /> : <Search className="size-4" />}
           {!searching ? 'Искать' : null}
         </AppButton>
-        <AppButton variant="outline" stretch onClick={onNewSession}>
-          <RefreshCcw className="size-4" />
-          Новая сессия
+
+        <AppButton variant="outline" stretch onClick={onReset}>
+          <RotateCcw className="size-4" />
+          Сбросить
         </AppButton>
       </div>
     </div>

@@ -10,7 +10,7 @@ export type SearchActionKey =
   | 'bounce'
   | 'irrelevant'
 
-export const pageSizeOptions = [12, 24, 48] as const
+export const pageSizeOptions = [10, 20, 30] as const
 
 export const incrementalModes: Array<{
   value: UploadMode

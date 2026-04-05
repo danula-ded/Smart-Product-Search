@@ -366,6 +366,12 @@ export function useWorkspaceModel() {
     void executeSearch({ nextPage: 1 })
   }
 
+  function resetSearch() {
+    setQuery('')
+    setError(null)
+    resetSearchState()
+  }
+
   function startNewSession() {
     const nextSessionId = createSessionId()
     setSessionId(nextSessionId)
@@ -437,6 +443,7 @@ export function useWorkspaceModel() {
     handleFilterToggle,
     clearAllFilters,
     startSearch,
+    resetSearch,
     startNewSession,
     openDetails,
     closeDetails,

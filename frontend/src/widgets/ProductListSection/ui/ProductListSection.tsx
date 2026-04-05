@@ -1,6 +1,5 @@
 import type { SearchResult } from '@/entities/product'
 import type { SearchResponse } from '@/shared/api'
-import { FeedbackLegend } from '@/features/search-products'
 import { SearchPagination } from '@/features/search-pagination'
 import { EmptyState } from '@/shared/ui'
 import { formatNumber } from '@/shared/lib/format'
@@ -43,24 +42,10 @@ export function ProductListSection({
           <div className="text-sm text-[var(--semantic-text-secondary)]">
             {searchState
               ? `${formatNumber(searchState.totalCount)} результатов, страница ${formatNumber(currentPage)} из ${formatNumber(totalPages)}`
-              : 'Сначала выполни поиск.'}
+              : 'Сначала выполните поиск.'}
           </div>
         </div>
       </div>
-
-      {searchState ? <FeedbackLegend /> : null}
-
-      {searchState ? (
-        <SearchPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          pageSize={searchState.limit}
-          totalCount={searchState.totalCount}
-          disabled={searching}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
-      ) : null}
 
       <ProductGrid
         results={searchState?.results ?? []}
@@ -76,21 +61,23 @@ export function ProductListSection({
       />
 
       {searchState && searchState.results.length > 0 ? (
-        <SearchPagination
-          currentPage={currentPage}
-          totalPages={totalPages}
-          pageSize={searchState.limit}
-          totalCount={searchState.totalCount}
-          disabled={searching}
-          onPageChange={onPageChange}
-          onPageSizeChange={onPageSizeChange}
-        />
+        <div className="pt-2">
+          <SearchPagination
+            currentPage={currentPage}
+            totalPages={totalPages}
+            pageSize={searchState.limit}
+            totalCount={searchState.totalCount}
+            disabled={searching}
+            onPageChange={onPageChange}
+            onPageSizeChange={onPageSizeChange}
+          />
+        </div>
       ) : null}
 
       {searchState && searchState.results.length === 0 ? (
         <EmptyState
           title="Ничего не найдено"
-          description="Попробуй убрать часть фильтров или изменить запрос."
+          description="Попробуйте убрать часть фильтров или изменить запрос."
         />
       ) : null}
     </div>

@@ -11,7 +11,7 @@ type MetricsSectionProps = {
 
 function CompactStat(props: { label: string; value: string | number }) {
   return (
-    <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-elevated)] px-4 py-4">
+    <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-elevated)] px-4 py-4 transition-colors duration-200 hover:border-[var(--semantic-border-strong)]">
       <div className="text-xs font-semibold uppercase tracking-[0.08em] text-[var(--semantic-text-muted)]">
         {props.label}
       </div>
@@ -39,27 +39,30 @@ function MetricDeltaCard(props: {
       </AppCardHeader>
       <AppCardContent className="space-y-3">
         <div className="grid grid-cols-2 gap-3 text-sm">
-          <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3">
+          <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3 transition-colors duration-200 hover:border-[var(--semantic-border-strong)]">
             <div className="text-xs text-[var(--semantic-text-muted)]">Baseline</div>
             <div className="mt-1 font-medium text-[var(--semantic-text-primary)]">
               {formatMetric(baseline)}
             </div>
           </div>
-          <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3">
+          <div className="rounded-md border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-3 transition-colors duration-200 hover:border-[var(--semantic-border-strong)]">
             <div className="text-xs text-[var(--semantic-text-muted)]">Personalized</div>
             <div className="mt-1 font-medium text-[var(--semantic-text-primary)]">
               {formatMetric(personalized)}
             </div>
           </div>
         </div>
-        <div className="rounded-md border border-[var(--semantic-border-default)] px-3 py-3 text-sm">
+        <div className="rounded-md border border-[var(--semantic-border-default)] px-3 py-3 text-sm transition-colors duration-200 hover:border-[var(--semantic-border-strong)]">
           <div className="flex items-center gap-2 font-medium text-[var(--semantic-text-primary)]">
             {direction === 'up' ? (
               <ArrowUpRight className="size-4 text-[var(--semantic-status-success)]" />
             ) : (
               <ArrowDownRight className="size-4 text-[var(--semantic-status-danger)]" />
             )}
-            <span>{delta >= 0 ? '+' : ''}{delta.toFixed(4)}</span>
+            <span>
+              {delta >= 0 ? '+' : ''}
+              {delta.toFixed(4)}
+            </span>
           </div>
           <div className="mt-3 h-2 rounded-full bg-[var(--semantic-progress-track)]">
             <div
@@ -117,10 +120,9 @@ export function MetricsSection({ metrics, metricsLoading }: MetricsSectionProps)
                 personalized={metrics.personalized.successAt5}
               />
             </div>
-            <div className="grid gap-4 lg:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-2">
               <CompactStat label="Товаров" value={formatNumber(metrics.dataset.products)} />
               <CompactStat label="Контрактов" value={formatNumber(metrics.dataset.contracts)} />
-              <CompactStat label="Профилей" value={formatNumber(metrics.dataset.profiles)} />
             </div>
           </div>
         ) : (

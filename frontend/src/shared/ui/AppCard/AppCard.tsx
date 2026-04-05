@@ -15,13 +15,14 @@ import {
 const appCardVariants = cva('', {
   variants: {
     tone: {
-      default: '',
+      default:
+        'transition-colors duration-200 hover:border-[var(--semantic-border-strong)] hover:bg-[var(--semantic-background-elevated)]',
       info:
-        'border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)]',
+        'border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)] transition-colors duration-200 hover:border-[var(--semantic-border-strong)] hover:bg-[var(--semantic-background-elevated)]',
       accent:
-        'border-[var(--semantic-border-accent)] bg-[var(--semantic-background-accent)]',
+        'border-[var(--semantic-border-accent)] bg-[var(--semantic-background-accent)] transition-colors duration-200 hover:border-[var(--semantic-border-accent)] hover:bg-[var(--semantic-background-elevated)]',
       highlight:
-        'border-[var(--semantic-border-default)] bg-[var(--semantic-background-highlight)]',
+        'border-[var(--semantic-border-default)] bg-[var(--semantic-background-highlight)] transition-colors duration-200 hover:border-[var(--semantic-border-strong)] hover:bg-[var(--semantic-background-elevated)]',
     },
   },
   defaultVariants: {

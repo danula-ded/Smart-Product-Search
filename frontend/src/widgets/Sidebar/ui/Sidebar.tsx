@@ -67,7 +67,7 @@ export function Sidebar() {
                 title={item.label}
                 className={({ isActive }) =>
                   cn(
-                    'flex w-full items-start border-y border-x-0 px-4 py-3 text-left transition-colors outline-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0',
+                    'flex w-full cursor-pointer items-start border-y border-x-0 px-4 py-3 text-left transition-colors outline-none group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0',
                     isActive
                       ? 'border-[var(--semantic-border-default)] bg-[var(--semantic-background-info)] text-[var(--semantic-text-primary)]'
                       : 'border-transparent text-[var(--semantic-text-secondary)] hover:border-[var(--semantic-border-default)] hover:bg-[var(--semantic-control-hover)] hover:text-[var(--semantic-text-primary)] focus-visible:border-[var(--semantic-border-default)] focus-visible:bg-[var(--semantic-control-hover)]',

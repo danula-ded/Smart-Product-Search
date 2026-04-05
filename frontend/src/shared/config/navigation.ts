@@ -1,12 +1,5 @@
 import type { LucideIcon } from 'lucide-react'
-import {
-  BarChart3,
-  Database,
-  FolderKanban,
-  Home,
-  Search,
-  Settings,
-} from 'lucide-react'
+import { BarChart3, Database, FolderKanban, Home } from 'lucide-react'
 
 export const appNavigationItems = [
   {
@@ -15,23 +8,15 @@ export const appNavigationItems = [
     icon: Home,
     sidebarDescription: 'Общий обзор и ключевые показатели',
     pageTitle: 'Главная',
-    pageDescription: 'Общий обзор состояния каталога, профилей и текущей рабочей области.',
-  },
-  {
-    path: '/search',
-    label: 'Поиск',
-    icon: Search,
-    sidebarDescription: 'Запрос и параметры подбора',
-    pageTitle: 'Поиск продукции',
-    pageDescription: 'Формирование поискового запроса и выбор профиля заказчика.',
+    pageDescription: 'Общий обзор состояния каталога и текущей рабочей области.',
   },
   {
     path: '/catalog',
     label: 'Каталог',
     icon: FolderKanban,
-    sidebarDescription: 'Фильтры и результаты поиска',
+    sidebarDescription: 'Поиск, фильтры и результаты',
     pageTitle: 'Каталог продукции',
-    pageDescription: 'Работа с фильтрами, карточками товаров и результатами поиска.',
+    pageDescription: 'Строка поиска, фильтры и выдача товаров собраны в одном экране.',
   },
   {
     path: '/data',
@@ -48,14 +33,6 @@ export const appNavigationItems = [
     sidebarDescription: 'Качество выдачи и динамика',
     pageTitle: 'Аналитика',
     pageDescription: 'Показатели качества и динамика изменений в результатах поиска.',
-  },
-  {
-    path: '/settings',
-    label: 'Настройки',
-    icon: Settings,
-    sidebarDescription: 'Параметры рабочего места',
-    pageTitle: 'Настройки',
-    pageDescription: 'Общие параметры использования системы и организационные сведения.',
   },
 ] as const
 

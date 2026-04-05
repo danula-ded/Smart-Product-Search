@@ -8,6 +8,10 @@ export function CatalogPage() {
   return (
     <>
       <CatalogSection
+        error={model.error}
+        query={model.query}
+        selectedCustomer={model.selectedCustomer}
+        profiles={model.profiles}
         hasDataset={model.hasDataset}
         activeFilterCount={model.activeFilterCount}
         filters={model.filters}
@@ -19,6 +23,10 @@ export function CatalogPage() {
         searching={model.searching}
         currentPage={model.currentPage}
         totalPages={model.totalPages}
+        onQueryChange={model.setQuery}
+        onProfileChange={model.handleProfileChange}
+        onSearch={model.startSearch}
+        onReset={model.resetSearch}
         onPageChange={(nextPage) => {
           void model.executeSearch({
             capturePrevious: false,

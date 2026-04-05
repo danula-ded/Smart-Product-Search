@@ -1,11 +1,6 @@
 import type { DemoProfile } from '@/shared/api'
-import {
-  AppCard,
-  AppCardContent,
-  AppCardHeader,
-  SectionTitle,
-} from '@/shared/ui'
 import { SearchToolbar } from '@/features/search-products'
+import { AppCard, AppCardContent, AppCardHeader, SectionTitle } from '@/shared/ui'
 
 type SearchSectionProps = {
   error: string | null
@@ -17,7 +12,6 @@ type SearchSectionProps = {
   onQueryChange: (value: string) => void
   onProfileChange: (value: string) => void
   onSearch: () => void
-  onNewSession: () => void
 }
 
 export function SearchSection({
@@ -30,7 +24,6 @@ export function SearchSection({
   onQueryChange,
   onProfileChange,
   onSearch,
-  onNewSession,
 }: SearchSectionProps) {
   return (
     <section className="space-y-4">
@@ -62,7 +55,7 @@ export function SearchSection({
             onQueryChange={onQueryChange}
             onProfileChange={onProfileChange}
             onSearch={onSearch}
-            onNewSession={onNewSession}
+            onReset={() => {}}
           />
         </AppCardContent>
       </AppCard>

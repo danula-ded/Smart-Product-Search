@@ -1,7 +1,9 @@
 import { Database } from 'lucide-react'
 
 import type { SearchResult } from '@/entities/product'
+import { SearchToolbar } from '@/features/search-products'
 import type {
+  DemoProfile,
   ProfileSummary,
   SearchFacetBucket,
   SearchFacetGroup,
@@ -14,6 +16,10 @@ import { CatalogFilters } from '@/widgets/CatalogFilters'
 import { ProductListSection } from '@/widgets/ProductListSection'
 
 type CatalogSectionProps = {
+  error: string | null
+  query: string
+  selectedCustomer: string
+  profiles: DemoProfile[]
   hasDataset: boolean
   activeFilterCount: number
   filters: SearchFilters
@@ -25,6 +31,10 @@ type CatalogSectionProps = {
   searching: boolean
   currentPage: number
   totalPages: number
+  onQueryChange: (value: string) => void
+  onProfileChange: (value: string) => void
+  onSearch: () => void
+  onReset: () => void
   onPageChange: (page: number) => void
   onPageSizeChange: (pageSize: number) => void
   onFilterToggle: (group: keyof SearchFilters, value: string, checked: boolean) => void
@@ -38,6 +48,10 @@ type CatalogSectionProps = {
 }
 
 export function CatalogSection({
+  error,
+  query,
+  selectedCustomer,
+  profiles,
   hasDataset,
   activeFilterCount,
   filters,
@@ -49,6 +63,10 @@ export function CatalogSection({
   searching,
   currentPage,
   totalPages,
+  onQueryChange,
+  onProfileChange,
+  onSearch,
+  onReset,
   onPageChange,
   onPageSizeChange,
   onFilterToggle,
@@ -66,23 +84,34 @@ export function CatalogSection({
         title="Каталог продукции"
         description={
           hasDataset
-            ? 'Используйте фильтры и просматривайте результаты в единой рабочей области.'
+            ? 'Поиск, фильтры и результаты собраны в одной рабочей области.'
             : 'Каталог временно недоступен, пока база продукции не подготовлена.'
         }
-        badge={
-          searchState ? (
-            <span className="text-sm text-[var(--semantic-text-secondary)]">
-              Найдено {formatNumber(searchState.totalCount)} позиций
-            </span>
-          ) : null
-        }
+      />
+
+      {error ? (
+        <div className="rounded-lg border border-[var(--semantic-border-interactive)] bg-[var(--semantic-background-danger)] px-4 py-4 text-sm text-[var(--semantic-status-danger)]">
+          {error}
+        </div>
+      ) : null}
+
+      <SearchToolbar
+        query={query}
+        selectedCustomer={selectedCustomer}
+        profiles={profiles}
+        hasDataset={hasDataset}
+        searching={searching}
+        onQueryChange={onQueryChange}
+        onProfileChange={onProfileChange}
+        onSearch={onSearch}
+        onReset={onReset}
       />
 
       {!hasDataset ? (
         <EmptyState
           icon={<Database className="size-6" />}
           title="Каталог пока недоступен"
-          description="После подготовки базы здесь появятся фильтры и результаты поиска по продукции."
+          description="После подготовки базы здесь появятся строка поиска, фильтры и результаты по продукции."
         />
       ) : (
         <div className="grid gap-6 xl:grid-cols-[320px_minmax(0,1fr)]">

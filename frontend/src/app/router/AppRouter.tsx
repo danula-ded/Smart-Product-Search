@@ -5,7 +5,6 @@ import { CatalogPage } from '@/pages/CatalogPage'
 import { DataPage } from '@/pages/DataPage'
 import { DashboardPage } from '@/pages/DashboardPage'
 import { SearchPage } from '@/pages/SearchPage'
-import { SettingsPage } from '@/pages/SettingsPage'
 
 import { AppLayout } from './AppLayout'
 
@@ -19,7 +18,6 @@ export function AppRouter() {
           <Route path="/catalog" element={<CatalogPage />} />
           <Route path="/data" element={<DataPage />} />
           <Route path="/analytics" element={<AnalyticsPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Route>
       </Routes>
