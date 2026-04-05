@@ -1,6 +1,5 @@
 import type { SearchResult } from '@/entities/product'
 import type { SearchResponse } from '@/shared/api'
-import { FeedbackLegend } from '@/features/search-products'
 import { SearchPagination } from '@/features/search-pagination'
 import { formatNumber } from '@/shared/lib/format'
 import { AppBadge, EmptyState } from '@/shared/ui'
@@ -8,7 +7,7 @@ import { ProductGrid } from '@/widgets/ProductGrid'
 
 type ProductListSectionProps = {
   searchState: SearchResponse | null
-  isFeedMode: boolean
+  isFeedMode?: boolean
   searching: boolean
   currentPage: number
   totalPages: number
@@ -24,7 +23,7 @@ type ProductListSectionProps = {
 
 export function ProductListSection({
   searchState,
-  isFeedMode,
+  isFeedMode = false,
   searching,
   currentPage,
   totalPages,
@@ -43,7 +42,6 @@ export function ProductListSection({
     : isFeedMode
       ? 'Оставьте поле запроса пустым, чтобы увидеть базовую подборку для выбранного профиля.'
       : 'Введите запрос, чтобы получить персонализированную выдачу.'
-
   const emptyTitle = isFeedMode ? 'Витрина пока пуста' : 'Ничего не найдено'
   const emptyDescription = isFeedMode
     ? 'Попробуйте выбрать другой профиль или загрузить данные на вкладке «Данные».'
@@ -60,13 +58,15 @@ export function ProductListSection({
           <div className="flex flex-wrap gap-2">
             <AppBadge tone="outline">Нормализация {searchState.timingsMs.normalize} ms</AppBadge>
             <AppBadge tone="outline">Поиск {searchState.timingsMs.retrieve} ms</AppBadge>
-            <AppBadge tone="outline">Переранжирование {searchState.timingsMs.rerank} ms</AppBadge>
-            <AppBadge>{isFeedMode ? 'Подборка' : 'Всего'} {searchState.timingsMs.total} ms</AppBadge>
+            <AppBadge tone="outline">
+              Переранжирование {searchState.timingsMs.rerank} ms
+            </AppBadge>
+            <AppBadge>
+              {isFeedMode ? 'Подборка' : 'Всего'} {searchState.timingsMs.total} ms
+            </AppBadge>
           </div>
         ) : null}
       </div>
-
-      {searchState ? <FeedbackLegend /> : null}
 
       {searchState ? (
         <SearchPagination

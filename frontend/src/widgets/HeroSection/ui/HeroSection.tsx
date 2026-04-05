@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
-import { BadgeCheck, Database, FolderSync, UserRound } from 'lucide-react'
+import { Database, FolderSync } from 'lucide-react'
 
-import type { DatasetSummary, DemoProfile, Health, SearchResponse } from '@/shared/api'
+import type { DatasetSummary, DemoProfile, SearchResponse } from '@/shared/api'
 import { formatNumber } from '@/shared/lib/format'
 import {
   AppBadge,
@@ -13,10 +13,7 @@ import {
 } from '@/shared/ui'
 
 type HeroSectionProps = {
-  health: Health | null
   summary: DatasetSummary | null
-  loadingData: boolean
-  sessionId: string
   selectedProfile: DemoProfile | null
   searchState: SearchResponse | null
 }
@@ -35,36 +32,22 @@ function CompactStat(props: { label: string; value: string | number; icon?: Reac
   )
 }
 
-export function HeroSection({
-  health,
-  summary,
-  loadingData,
-  sessionId,
-  selectedProfile,
-  searchState,
-}: HeroSectionProps) {
+export function HeroSection({ summary, selectedProfile, searchState }: HeroSectionProps) {
   return (
     <section className="grid gap-4 lg:grid-cols-[1.45fr_1fr]">
       <AppCard tone="highlight">
         <AppCardHeader>
           <div className="flex flex-wrap items-center gap-2">
-            <AppBadge tone="outline">Основной экран</AppBadge>
-            <AppBadge tone={health?.status === 'healthy' ? 'accent' : 'danger'}>
-              {health?.status ?? 'offline'}
-            </AppBadge>
-            {loadingData ? <AppBadge tone="info">Синхронизация</AppBadge> : null}
+            <AppBadge tone="outline">Общая информация</AppBadge>
           </div>
-          <AppCardTitle className="text-2xl sm:text-3xl">
-            Поиск и персонализация СТЕ
-          </AppCardTitle>
+          <AppCardTitle className="text-2xl sm:text-3xl">Поиск и подбор продукции</AppCardTitle>
           <AppCardDescription>
-            Единый экран для демо: поиск, динамические фильтры, профили заказчиков и живая
-            перестройка выдачи после действий пользователя.
+            Основные показатели каталога и текущий рабочий контекст собраны в одном блоке.
           </AppCardDescription>
         </AppCardHeader>
-        <AppCardContent className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <AppCardContent className="grid gap-3 sm:grid-cols-2">
           <CompactStat
-            label="Товаров в индексе"
+            label="Товаров в каталоге"
             value={formatNumber(summary?.counts.products)}
             icon={<Database className="size-3.5 text-[var(--semantic-icon-primary)]" />}
           />
@@ -73,16 +56,6 @@ export function HeroSection({
             value={formatNumber(summary?.counts.contracts)}
             icon={<FolderSync className="size-3.5 text-[var(--semantic-icon-primary)]" />}
           />
-          <CompactStat
-            label="Профилей"
-            value={formatNumber(summary?.counts.profiles)}
-            icon={<UserRound className="size-3.5 text-[var(--semantic-icon-primary)]" />}
-          />
-          <CompactStat
-            label="Версия backend"
-            value={health?.version ?? 'n/a'}
-            icon={<BadgeCheck className="size-3.5 text-[var(--semantic-icon-primary)]" />}
-          />
         </AppCardContent>
       </AppCard>
 
@@ -90,23 +63,17 @@ export function HeroSection({
         <AppCardHeader>
           <AppCardTitle>Текущий контекст</AppCardTitle>
           <AppCardDescription>
-            Поиск идёт по FTS5, затем ранжирование меняется историей контрактов и событиями текущей
-            сессии.
+            Здесь видно, какой профиль сейчас выбран и что происходило в последнем поисковом
+            ответе.
           </AppCardDescription>
         </AppCardHeader>
         <AppCardContent className="space-y-3">
           <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-elevated)] p-4">
             <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
-              Текущая сессия
-            </div>
-            <div className="mt-2 font-medium text-[var(--semantic-text-primary)]">{sessionId}</div>
-          </div>
-          <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-elevated)] p-4">
-            <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
               Выбранный профиль
             </div>
             <div className="mt-2 text-sm font-medium text-[var(--semantic-text-primary)]">
-              {selectedProfile?.summary.customerName ?? 'Профиль не выбран'}
+              {selectedProfile?.summary.customerName ?? 'Новый или невыбранный заказчик'}
             </div>
             <div className="mt-1 text-xs text-[var(--semantic-text-muted)]">
               {selectedProfile?.customerId ?? 'Без customerId'}
@@ -115,7 +82,7 @@ export function HeroSection({
           <div className="rounded-lg border border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)] p-4 text-sm leading-6 text-[var(--semantic-text-secondary)]">
             {searchState
               ? `Последний поиск: ${searchState.totalCount} результатов, API ${searchState.timingsMs.total} ms`
-              : 'Пока нет активного поискового ответа. Выполни запрос или переключи профиль после поиска.'}
+              : 'Пока нет активного поискового ответа. Перейдите в каталог и выполните поиск или откройте персональную витрину.'}
           </div>
         </AppCardContent>
       </AppCard>

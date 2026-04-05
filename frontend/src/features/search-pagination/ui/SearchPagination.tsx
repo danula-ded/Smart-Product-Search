@@ -67,8 +67,11 @@ export function SearchPagination({
         <div className="flex items-center gap-1">
           {visiblePages.map((page, index) =>
             page === 'ellipsis' ? (
-              <span key={`ellipsis-${index}`} className="px-2 text-sm text-[var(--semantic-text-muted)]">
-                …
+              <span
+                key={`ellipsis-${index}`}
+                className="px-2 text-sm text-[var(--semantic-text-muted)]"
+              >
+                ...
               </span>
             ) : (
               <AppButton

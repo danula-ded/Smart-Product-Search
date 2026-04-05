@@ -10,7 +10,7 @@ export type SearchActionKey =
   | 'bounce'
   | 'irrelevant'
 
-export const pageSizeOptions = [12, 24, 48] as const
+export const pageSizeOptions = [10, 20, 30] as const
 
 export const incrementalModes: Array<{
   value: UploadMode
@@ -37,17 +37,17 @@ export const incrementalModes: Array<{
 export const searchActionDetails = {
   open: {
     label: 'Открыть',
-    description: 'Открывает карточку товара и даёт мягкий положительный сигнал текущему товару.',
+    description: 'Открывает карточку товара и дает мягкий положительный сигнал текущему товару.',
     impact: 'Поднимает этот товар и похожие позиции в текущей сессии.',
   },
   details: {
     label: 'Детали',
-    description: 'Открывает полную карточку без оценочного сигнала.',
+    description: 'Открывает полную карточку без явной оценки.',
     impact: 'На ранжирование не влияет.',
   },
   relevant: {
     label: 'Релевантно',
-    description: 'Сильный положительный сигнал: результат подошёл.',
+    description: 'Сильный положительный сигнал: результат подошел.',
     impact: 'Заметно поднимает товар и его категорию в текущей сессии.',
   },
   save: {

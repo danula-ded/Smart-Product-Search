@@ -229,6 +229,10 @@ export async function getMetrics() {
   return parseResponse<MetricsSummary>(await fetch('/metrics/summary'));
 }
 
+export async function getProduct(productId: string) {
+  return parseResponse<Product>(await fetch(`/products/${productId}`));
+}
+
 export async function uploadDatasets(
   mode: UploadMode,
   steFile?: File | null,

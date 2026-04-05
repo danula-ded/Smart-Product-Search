@@ -1,6 +1,12 @@
 import { ArrowDownRight, ArrowUpRight } from 'lucide-react'
 
-import { AppCard, AppCardContent, AppCardDescription, AppCardHeader, AppCardTitle } from '@/shared/ui'
+import {
+  AppCard,
+  AppCardContent,
+  AppCardDescription,
+  AppCardHeader,
+  AppCardTitle,
+} from '@/shared/ui'
 
 type ComparisonRow = {
   id: string
@@ -27,8 +33,8 @@ export function DynamicsSection({ comparisonRows }: DynamicsSectionProps) {
       <AppCardContent>
         {comparisonRows.length === 0 ? (
           <div className="text-sm leading-6 text-[var(--semantic-text-secondary)]">
-            Сначала выполни поиск, затем отметь карточку как релевантную, нерелевантную или сделай
-            быстрый возврат.
+            Сначала выполните поиск, затем отметьте карточку как релевантную, нерелевантную или
+            сделайте быстрый возврат.
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">

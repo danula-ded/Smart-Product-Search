@@ -1,6 +1,5 @@
 import type { SearchResult } from '@/entities/product'
-import { ProductCard } from '@/entities/product'
-import { Skeleton } from '@/shared/ui'
+import { ProductCard, ProductCardSkeleton } from '@/entities/product'
 
 type ProductGridProps = {
   results: SearchResult[]
@@ -29,17 +28,13 @@ export function ProductGrid({
 }: ProductGridProps) {
   if (loading && showInitialSkeletons) {
     return (
-      <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+      <div className="flex flex-wrap gap-4">
         {Array.from({ length: 6 }).map((_, index) => (
           <div
             key={`skeleton-${index}`}
-            className="rounded-xl border border-[var(--semantic-border-default)] bg-[var(--semantic-background-card)] p-5"
+            className="min-w-0 basis-full md:basis-[calc(50%-0.5rem)] 2xl:basis-[calc(33.333%-0.75rem)]"
           >
-            <Skeleton className="h-4 w-32" />
-            <Skeleton className="mt-4 h-8 w-full" />
-            <Skeleton className="mt-3 h-4 w-full" />
-            <Skeleton className="mt-2 h-4 w-5/6" />
-            <Skeleton className="mt-5 h-24 w-full" />
+            <ProductCardSkeleton />
           </div>
         ))}
       </div>
@@ -47,22 +42,26 @@ export function ProductGrid({
   }
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
+    <div className="flex flex-wrap gap-4">
       {results.map((result, index) => {
         const position = offset + index + 1
 
         return (
-          <ProductCard
+          <div
             key={result.product.id}
-            result={result}
-            position={position}
-            onOpen={() => onOpen(result, position)}
-            onRelevant={() => onRelevant(result, position)}
-            onIrrelevant={() => onIrrelevant(result, position)}
-            onBounce={() => onBounce(result, position)}
-            onSave={() => onSave(result, position)}
-            onDetails={() => onDetails(result)}
-          />
+            className="min-w-0 basis-full md:basis-[calc(50%-0.5rem)] 2xl:basis-[calc(33.333%-0.75rem)]"
+          >
+            <ProductCard
+              result={result}
+              position={position}
+              onOpen={() => onOpen(result, position)}
+              onRelevant={() => onRelevant(result, position)}
+              onIrrelevant={() => onIrrelevant(result, position)}
+              onBounce={() => onBounce(result, position)}
+              onSave={() => onSave(result, position)}
+              onDetails={() => onDetails(result)}
+            />
+          </div>
         )
       })}
     </div>

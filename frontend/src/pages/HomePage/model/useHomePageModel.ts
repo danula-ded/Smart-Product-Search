@@ -577,6 +577,12 @@ export function useHomePageModel() {
     void executeSearch({ targetTab: 'search', nextPage: 1 })
   }
 
+  function resetSearch() {
+    setQuery('')
+    setError(null)
+    resetSearchState()
+  }
+
   function startNewSession() {
     const nextSessionId = createSessionId()
     setSessionId(nextSessionId)
@@ -666,6 +672,7 @@ export function useHomePageModel() {
     handleFilterToggle,
     clearAllFilters,
     startSearch,
+    resetSearch,
     startNewSession,
     openDetails,
     closeDetails,

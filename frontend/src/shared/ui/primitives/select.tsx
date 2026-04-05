@@ -42,7 +42,7 @@ function SelectTrigger({
       data-slot="select-trigger"
       data-size={size}
       className={cn(
-        "flex w-fit items-center justify-between gap-1.5 rounded-lg border border-input bg-[var(--semantic-background-elevated)] py-2 pr-3 pl-3.5 text-sm whitespace-nowrap text-foreground transition-[background-color,border-color,box-shadow] outline-none select-none hover:border-[var(--semantic-border-strong)] focus-visible:border-[var(--semantic-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--semantic-focus-ring)] disabled:cursor-not-allowed disabled:bg-[var(--semantic-control-disabled)] disabled:opacity-100 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-[var(--semantic-focus-ring)] data-placeholder:text-[var(--semantic-text-muted)] data-[size=default]:h-11 data-[size=sm]:h-9 data-[size=sm]:rounded-md *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+        "flex w-fit cursor-pointer items-center justify-between gap-1.5 rounded-lg border border-input bg-[var(--semantic-background-elevated)] py-2 pr-3 pl-3.5 text-sm whitespace-nowrap text-foreground transition-[background-color,border-color,box-shadow] outline-none select-none hover:border-[var(--semantic-border-strong)] hover:bg-[var(--semantic-control-hover)] focus-visible:border-[var(--semantic-border-strong)] focus-visible:ring-2 focus-visible:ring-[var(--semantic-focus-ring)] disabled:cursor-not-allowed disabled:bg-[var(--semantic-control-disabled)] disabled:opacity-100 aria-invalid:border-destructive aria-invalid:ring-2 aria-invalid:ring-[var(--semantic-focus-ring)] data-placeholder:text-[var(--semantic-text-muted)] data-[size=default]:h-11 data-[size=sm]:h-9 data-[size=sm]:rounded-md *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}
@@ -110,7 +110,7 @@ function SelectItem({
     <SelectPrimitive.Item
       data-slot="select-item"
       className={cn(
-        "relative flex w-full cursor-default items-center gap-1.5 rounded-md py-2.5 pr-9 pl-3.5 text-sm outline-hidden select-none focus:bg-[var(--semantic-control-hover)] focus:text-foreground not-data-[variant=destructive]:focus:**:text-foreground data-disabled:pointer-events-none data-disabled:bg-[var(--semantic-control-disabled)] data-disabled:opacity-100 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
+        "relative flex w-full cursor-pointer items-center gap-1.5 rounded-md py-2.5 pr-9 pl-3.5 text-sm outline-hidden select-none hover:bg-[var(--semantic-control-hover)] focus:bg-[var(--semantic-control-hover)] focus:text-foreground not-data-[variant=destructive]:focus:**:text-foreground data-disabled:pointer-events-none data-disabled:cursor-not-allowed data-disabled:bg-[var(--semantic-control-disabled)] data-disabled:opacity-100 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 *:[span]:last:flex *:[span]:last:items-center *:[span]:last:gap-2",
         className
       )}
       {...props}
@@ -146,7 +146,7 @@ function SelectScrollUpButton({
     <SelectPrimitive.ScrollUpButton
       data-slot="select-scroll-up-button"
       className={cn(
-        "z-10 flex cursor-default items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-4",
+        "z-10 flex cursor-pointer items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}
@@ -165,7 +165,7 @@ function SelectScrollDownButton({
     <SelectPrimitive.ScrollDownButton
       data-slot="select-scroll-down-button"
       className={cn(
-        "z-10 flex cursor-default items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-4",
+        "z-10 flex cursor-pointer items-center justify-center bg-popover py-1 [&_svg:not([class*='size-'])]:size-4",
         className
       )}
       {...props}

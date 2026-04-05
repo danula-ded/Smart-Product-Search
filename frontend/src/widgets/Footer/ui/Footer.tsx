@@ -1,30 +1,17 @@
-import type { Health } from '@/shared/api'
-import { AppBadge, AppCard, AppCardContent, AppLink } from '@/shared/ui'
-
-type FooterProps = {
-  health: Health | null
-}
-
-export function Footer({ health }: FooterProps) {
+export function Footer() {
   return (
-    <AppCard className="mt-2">
-      <AppCardContent className="flex flex-col gap-3 py-1 md:flex-row md:items-center md:justify-between">
+    <footer className="border-t border-[var(--semantic-border-default)] bg-[var(--semantic-background-section)]">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-3 px-4 py-6 sm:px-6 xl:px-8 md:flex-row md:items-center md:justify-between">
         <div className="space-y-1">
           <div className="text-sm font-semibold text-[var(--semantic-text-primary)]">
             Smart Product Search
           </div>
           <div className="text-sm text-[var(--semantic-text-secondary)]">
-            Прототип для демонстрации поиска, персонализации и загрузки данных без внешних API.
+            Единое рабочее место для поиска, подбора и анализа продукции.
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <AppBadge tone={health?.status === 'healthy' ? 'accent' : 'danger'}>
-            {health?.status ?? 'offline'}
-          </AppBadge>
-          <AppBadge tone="outline">Версия {health?.version ?? 'n/a'}</AppBadge>
-          <AppLink href="#top">Наверх</AppLink>
-        </div>
-      </AppCardContent>
-    </AppCard>
+        <div className="text-xs text-[var(--semantic-text-muted)]">(c) 2026 Smart Product Search</div>
+      </div>
+    </footer>
   )
 }
