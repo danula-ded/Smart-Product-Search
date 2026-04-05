@@ -8,6 +8,7 @@ import warnings
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api import router
@@ -67,8 +68,36 @@ app.include_router(router)
 
 
 frontend_dist = settings.PROJECT_ROOT / "frontend" / "dist"
+frontend_index = frontend_dist / "index.html"
+
 if frontend_dist.exists():
-    app.mount("/", StaticFiles(directory=frontend_dist, html=True), name="frontend")
+    for asset_name in (
+        "assets",
+        "android-chrome-192x192.png",
+        "android-chrome-512x512.png",
+        "apple-touch-icon.png",
+        "favicon-16x16.png",
+        "favicon-32x32.png",
+        "favicon.ico",
+        "site.webmanifest",
+    ):
+        asset_path = frontend_dist / asset_name
+        if asset_path.is_dir():
+            app.mount(f"/{asset_name}", StaticFiles(directory=asset_path), name=f"frontend-{asset_name}")
+        elif asset_path.is_file():
+            route_path = f"/{asset_name}"
+
+            @app.get(route_path, include_in_schema=False)
+            async def serve_frontend_asset(asset_path=asset_path):
+                return FileResponse(asset_path)
+
+    @app.get("/", include_in_schema=False)
+    async def serve_frontend_index():
+        return FileResponse(frontend_index)
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def serve_frontend_spa(full_path: str):
+        return FileResponse(frontend_index)
 
 
 def custom_openapi():
