@@ -129,6 +129,33 @@ def test_search_handles_typos_and_synonyms(client, ste_csv, contracts_csv):
     assert payload["correctedQuery"].split()[1] == "smartbuy"
     assert any(item["to"] == "smartbuy" for item in payload["queryInterpretation"]["typoCorrections"])
     assert any(item["to"] == "usb" for item in payload["queryInterpretation"]["synonymMappings"])
+    assert "lemmaMappings" in payload["queryInterpretation"]
+    assert "spellCandidates" in payload["queryInterpretation"]
+    assert "protectedTokens" in payload["queryInterpretation"]
+    assert "16" in payload["queryInterpretation"]["protectedTokens"]
+
+
+def test_search_corrects_common_russian_typos(client, ste_csv, contracts_csv):
+    extra_row = (
+        "4001;Рабочая тетрадь А4 48 листов;Канцелярия;"
+        "\"Формат:А4;Количество листов:48;Тип:тетрадь\"\n"
+    ).encode("utf-8")
+    _upload_test_dataset(client, ste_csv + extra_row, contracts_csv)
+
+    response = client.post(
+        "/search",
+        json={
+            "query": "ребочая тетрадь",
+            "limit": 10,
+            "offset": 0,
+            "includeDebug": True,
+        },
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["results"][0]["product"]["id"] == "4001"
+    assert payload["correctedQuery"].startswith("рабочая")
+    assert any(item["to"] == "рабочая" for item in payload["queryInterpretation"]["typoCorrections"])
 
 
 def test_duplicate_ste_rows_do_not_create_duplicate_search_results(

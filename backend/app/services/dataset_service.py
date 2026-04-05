@@ -4,26 +4,36 @@ from __future__ import annotations
 
 import csv
 import json
+import sqlite3
 import shutil
 import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from fastapi import HTTPException, UploadFile
 
 from app.config import settings
+from app.services.ranking.training_dataset import build_training_cases
+from app.services.search_nlp.morphology import MorphologyService
 from app.services.text_utils import (
+    SYNONYM_GROUPS,
+    SYNONYM_MAP,
     build_search_text,
+    build_seed_synonym_pairs,
     clean_cell,
     counter_to_top_items,
     guess_brand_and_model,
+    is_alphanumeric_model,
+    looks_like_unit,
     log_cost_weight,
     normalize_text,
     parse_attributes,
     parse_numeric_value,
     recency_weight,
+    simple_russian_lemma,
     tokenize,
 )
 from app.storage.sqlite_db import SQLiteDatabase, utcnow_iso
@@ -66,6 +76,10 @@ class ImportStats:
     customers_rebuilt: int = 0
     demo_profiles: int = 0
     lexicon_terms: int = 0
+    dictionary_terms: int = 0
+    synonym_candidates: int = 0
+    synonym_rules: int = 0
+    ranking_model_ready: int = 0
 
     def as_dict(self) -> dict[str, int]:
         return {
@@ -77,6 +91,10 @@ class ImportStats:
             "customersRebuilt": self.customers_rebuilt,
             "demoProfiles": self.demo_profiles,
             "lexiconTerms": self.lexicon_terms,
+            "dictionaryTerms": self.dictionary_terms,
+            "synonymCandidates": self.synonym_candidates,
+            "synonymRules": self.synonym_rules,
+            "rankingModelReady": self.ranking_model_ready,
         }
 
 
@@ -87,6 +105,8 @@ class DatasetService:
         self.db = db
         self.executor = ThreadPoolExecutor(max_workers=settings.JOB_WORKERS)
         settings.UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+        settings.ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+        self.morphology = MorphologyService()
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)
@@ -324,6 +344,13 @@ class DatasetService:
 
                 stats.demo_profiles = self._rebuild_demo_profiles(cursor)
                 stats.lexicon_terms = self._rebuild_lexicon(cursor)
+                stats.dictionary_terms = self._rebuild_term_dictionary(cursor)
+                self._rebuild_symspell_dictionary_artifact(cursor)
+                stats.synonym_candidates = self._mine_synonym_candidates(cursor)
+                stats.synonym_rules = self._materialize_synonym_rules(cursor)
+                self._rebuild_search_text_and_fts(cursor, job_id=job_id)
+                stats.ranking_model_ready = self._train_or_refresh_ranker(cursor)
+                cursor.execute("DELETE FROM runtime_cache")
                 connection.commit()
 
             self._update_job(
@@ -403,10 +430,17 @@ class DatasetService:
             "demo_profiles",
             "quality_cases",
             "lexicon",
+            "term_dictionary",
+            "synonym_rules",
+            "synonym_candidates",
+            "model_artifacts",
             "runtime_cache",
         ):
             cursor.execute(f"DELETE FROM {table}")
         cursor.execute("DELETE FROM product_fts")
+        for artifact_path in settings.ARTIFACTS_DIR.glob("*"):
+            if artifact_path.is_file():
+                artifact_path.unlink(missing_ok=True)
 
     def _estimate_total_rows(self, path: Path, skip_header: bool) -> int:
         file_size = path.stat().st_size
@@ -434,7 +468,20 @@ class DatasetService:
         progress = stage_start + (stage_end - stage_start) * min(
             1.0, processed / max(estimated_total, 1)
         )
-        self._update_job(job_id, progress=round(progress, 4))
+        connection: sqlite3.Connection | None = None
+        try:
+            connection = sqlite3.connect(self.db.path, timeout=0.05, check_same_thread=False)
+            connection.execute("PRAGMA busy_timeout=50;")
+            connection.execute(
+                "UPDATE ingestion_jobs SET progress = ? WHERE job_id = ?",
+                [round(progress, 4), job_id],
+            )
+            connection.commit()
+        except sqlite3.OperationalError:
+            return
+        finally:
+            if connection is not None:
+                connection.close()
 
     def _delete_by_ids(self, cursor, table: str, column: str, values: list[str]) -> None:
         unique_values = list(dict.fromkeys(values))
@@ -968,6 +1015,491 @@ class DatasetService:
             [(term, int(doc_freq)) for term, doc_freq in counter.most_common(25000)],
         )
         return len(counter)
+
+    def _rebuild_term_dictionary(self, cursor) -> int:
+        term_stats: dict[str, dict[str, Any]] = {}
+
+        def register_terms(text: str | None, source_mask: int, forced_type: str | None = None) -> None:
+            seen_tokens = set(tokenize(text))
+            for token in seen_tokens:
+                lemma = self.morphology.lemma(token, forced_type)
+                info = term_stats.setdefault(
+                    token,
+                    {
+                        "lemma": lemma or simple_russian_lemma(token) or token,
+                        "doc_freq": 0,
+                        "term_type": forced_type or self._infer_term_type(token),
+                        "source_mask": 0,
+                    },
+                )
+                info["doc_freq"] += 1
+                info["source_mask"] |= source_mask
+                if forced_type:
+                    info["term_type"] = forced_type
+                if not info["lemma"]:
+                    info["lemma"] = lemma or token
+
+        for row in cursor.execute(
+            """
+            SELECT title_raw, category_raw, brand_guess, model_guess, attributes_raw
+            FROM products
+            """
+        ).fetchall():
+            register_terms(row["title_raw"], 1)
+            register_terms(row["category_raw"], 2, forced_type="category")
+            if row["brand_guess"]:
+                register_terms(row["brand_guess"], 4, forced_type="brand")
+            if row["model_guess"]:
+                register_terms(row["model_guess"], 8, forced_type="model")
+            for attr_name, attr_value in parse_attributes(row["attributes_raw"]):
+                register_terms(attr_name, 16, forced_type="attribute")
+                register_terms(attr_value, 32)
+
+        for row in cursor.execute(
+            "SELECT purchase_name_raw FROM contracts"
+        ).fetchall():
+            register_terms(row["purchase_name_raw"], 64)
+
+        for alias, canonical in build_seed_synonym_pairs():
+            register_terms(alias, 128, forced_type=self._infer_term_type(canonical))
+            register_terms(canonical, 128, forced_type=self._infer_term_type(canonical))
+
+        timestamp = utcnow_iso()
+        cursor.execute("DELETE FROM term_dictionary")
+        cursor.executemany(
+            """
+            INSERT INTO term_dictionary (
+                term, lemma, doc_freq, term_type, source_mask, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    term,
+                    str(meta["lemma"]),
+                    int(meta["doc_freq"]),
+                    str(meta["term_type"]),
+                    int(meta["source_mask"]),
+                    timestamp,
+                )
+                for term, meta in sorted(term_stats.items())
+                if term
+            ],
+        )
+        snapshot_path = settings.ARTIFACTS_DIR / "term_dictionary_snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                {
+                    term: {
+                        "lemma": meta["lemma"],
+                        "docFreq": meta["doc_freq"],
+                        "termType": meta["term_type"],
+                        "sourceMask": meta["source_mask"],
+                    }
+                    for term, meta in sorted(term_stats.items())
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self._upsert_model_artifact(
+            cursor,
+            artifact_key="term_dictionary_snapshot",
+            path=snapshot_path,
+            signature={
+                "terms": len(term_stats),
+            },
+            meta={"kind": "term_dictionary"},
+        )
+        return len(term_stats)
+
+    def _rebuild_symspell_dictionary_artifact(self, cursor) -> None:
+        rows = cursor.execute(
+            """
+            SELECT term, doc_freq
+            FROM term_dictionary
+            ORDER BY doc_freq DESC, term ASC
+            """
+        ).fetchall()
+        path = settings.ARTIFACTS_DIR / "symspell_dictionary.txt"
+        with path.open("w", encoding="utf-8", newline="\n") as handle:
+            for row in rows:
+                handle.write(f"{row['term']} {int(row['doc_freq'])}\n")
+        self._upsert_model_artifact(
+            cursor,
+            artifact_key="symspell_dictionary",
+            path=path,
+            signature={"terms": len(rows)},
+            meta={"kind": "symspell"},
+        )
+
+    def _mine_synonym_candidates(self, cursor) -> int:
+        candidates: dict[tuple[str, str, str], dict[str, Any]] = {}
+        timestamp = utcnow_iso()
+
+        def remember(alias: str, canonical: str, score: float, source: str, scope: str = "global", context: dict[str, Any] | None = None) -> None:
+            alias_norm = normalize_text(alias)
+            canonical_norm = normalize_text(canonical)
+            if not alias_norm or not canonical_norm or alias_norm == canonical_norm:
+                return
+            key = (alias_norm, canonical_norm, scope)
+            previous = candidates.get(key)
+            if previous and previous["score"] >= score:
+                return
+            candidates[key] = {
+                "alias": alias_norm,
+                "canonical": canonical_norm,
+                "score": round(score, 4),
+                "source": source,
+                "context_json": json.dumps(context or {}, ensure_ascii=False),
+                "status": "pending",
+                "updated_at": timestamp,
+            }
+
+        for alias, canonical in build_seed_synonym_pairs():
+            remember(alias, canonical, 1.0, "seed")
+
+        lemma_groups: dict[str, list[tuple[str, int, str]]] = {}
+        for row in cursor.execute(
+            """
+            SELECT term, lemma, doc_freq, term_type
+            FROM term_dictionary
+            """
+        ).fetchall():
+            lemma_groups.setdefault(row["lemma"], []).append(
+                (row["term"], int(row["doc_freq"]), str(row["term_type"]))
+            )
+
+        for lemma, terms in lemma_groups.items():
+            if len(terms) < 2:
+                continue
+            terms.sort(key=lambda item: (-item[1], item[0]))
+            canonical = terms[0][0]
+            canonical_type = terms[0][2]
+            for term, doc_freq, term_type in terms[1:8]:
+                if term_type != canonical_type and canonical_type not in {"token", term_type}:
+                    continue
+                confidence = 0.94 if canonical_type in {"token", "category", "attribute"} else 0.90
+                remember(
+                    term,
+                    canonical,
+                    confidence,
+                    "lemma_group",
+                    context={"lemma": lemma, "docFreq": doc_freq},
+                )
+
+        cursor.execute("DELETE FROM synonym_candidates")
+        cursor.executemany(
+            """
+            INSERT INTO synonym_candidates (
+                alias, canonical, scope, score, source, context_json, status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    payload["alias"],
+                    payload["canonical"],
+                    scope,
+                    payload["score"],
+                    payload["source"],
+                    payload["context_json"],
+                    payload["status"],
+                    payload["updated_at"],
+                )
+                for (alias, canonical, scope), payload in sorted(candidates.items())
+            ],
+        )
+        snapshot_path = settings.ARTIFACTS_DIR / "synonym_snapshot.json"
+        snapshot_path.write_text(
+            json.dumps(
+                sorted(candidates.values(), key=lambda item: (-item["score"], item["alias"])),
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        self._upsert_model_artifact(
+            cursor,
+            artifact_key="synonym_snapshot",
+            path=snapshot_path,
+            signature={"candidates": len(candidates)},
+            meta={"kind": "synonyms"},
+        )
+        return len(candidates)
+
+    def _materialize_synonym_rules(self, cursor) -> int:
+        timestamp = utcnow_iso()
+        term_types = {
+            row["term"]: row["term_type"]
+            for row in cursor.execute(
+                "SELECT term, term_type FROM term_dictionary"
+            ).fetchall()
+        }
+        cursor.execute("DELETE FROM synonym_rules")
+
+        rules: dict[tuple[str, str, str], tuple[float, str, str]] = {}
+
+        for alias, canonical in build_seed_synonym_pairs():
+            rules[(alias, canonical, "global")] = (1.0, "seed", "active")
+
+        for row in cursor.execute(
+            """
+            SELECT alias, canonical, scope, score, source
+            FROM synonym_candidates
+            WHERE score >= 0.92
+            ORDER BY score DESC
+            """
+        ).fetchall():
+            alias = row["alias"]
+            canonical = row["canonical"]
+            if alias == canonical:
+                continue
+            alias_type = term_types.get(alias, "token")
+            canonical_type = term_types.get(canonical, "token")
+            if alias_type not in {"token", canonical_type} and canonical_type not in {"token", alias_type}:
+                continue
+            rules[(alias, canonical, row["scope"])] = (
+                float(row["score"]),
+                str(row["source"]),
+                "active",
+            )
+
+        cursor.executemany(
+            """
+            INSERT INTO synonym_rules (
+                alias, canonical, scope, confidence, source, status, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    alias,
+                    canonical,
+                    scope,
+                    confidence,
+                    source,
+                    status,
+                    timestamp,
+                )
+                for (alias, canonical, scope), (confidence, source, status) in sorted(rules.items())
+            ],
+        )
+        return len(rules)
+
+    def _rebuild_search_text_and_fts(self, cursor, *, job_id: str) -> None:
+        synonym_map: dict[str, str] = dict(SYNONYM_MAP)
+        synonym_groups: dict[str, list[str]] = {
+            key: list(values) for key, values in SYNONYM_GROUPS.items()
+        }
+
+        for row in cursor.execute(
+            """
+            SELECT alias, canonical
+            FROM synonym_rules
+            WHERE status = 'active' AND scope = 'global'
+            """
+        ).fetchall():
+            alias = normalize_text(row["alias"])
+            canonical = normalize_text(row["canonical"])
+            synonym_map[alias] = canonical
+            values = synonym_groups.setdefault(canonical, [])
+            if alias not in values and alias != canonical:
+                values.append(alias)
+
+        product_rows = cursor.execute(
+            """
+            SELECT ste_id, title_raw, category_raw, attributes_raw, brand_guess, model_guess
+            FROM products
+            ORDER BY ste_id
+            """
+        ).fetchall()
+        total = max(len(product_rows), 1)
+        cursor.execute("DELETE FROM product_fts")
+
+        batch: list[tuple[str, str, str]] = []
+        for index, row in enumerate(product_rows, start=1):
+            attributes = parse_attributes(row["attributes_raw"])
+            search_text = build_search_text(
+                row["title_raw"],
+                row["category_raw"],
+                attributes,
+                brand_guess=row["brand_guess"],
+                model_guess=row["model_guess"],
+                synonyms_map=synonym_map,
+                synonym_groups=synonym_groups,
+                include_lemmas=True,
+            )
+            batch.append((search_text, utcnow_iso(), row["ste_id"]))
+            cursor.execute(
+                "INSERT INTO product_fts (ste_id, search_text) VALUES (?, ?)",
+                [row["ste_id"], search_text],
+            )
+            if len(batch) >= STE_BATCH_SIZE:
+                cursor.executemany(
+                    "UPDATE products SET search_text = ?, updated_at = ? WHERE ste_id = ?",
+                    batch,
+                )
+                batch = []
+                self._update_stage_progress(
+                    job_id,
+                    stage_start=0.92,
+                    stage_end=0.98,
+                    processed=index,
+                    estimated_total=total,
+                )
+
+        if batch:
+            cursor.executemany(
+                "UPDATE products SET search_text = ?, updated_at = ? WHERE ste_id = ?",
+                batch,
+            )
+
+    def _train_or_refresh_ranker(self, cursor) -> int:
+        if not settings.RANKER_ENABLED:
+            return 0
+        artifact_path = settings.ARTIFACTS_DIR / "catboost_ranker.cbm"
+        contract_rows = [
+            dict(row)
+            for row in cursor.execute(
+                """
+                SELECT c.customer_inn, c.ste_id, c.purchase_name_raw, p.title_raw
+                FROM contracts c
+                JOIN products p ON p.ste_id = c.ste_id
+                WHERE c.matched_product = 1
+                ORDER BY c.updated_at DESC
+                LIMIT 2000
+                """
+            ).fetchall()
+        ]
+        cases = build_training_cases(contract_rows)
+        if artifact_path.exists():
+            artifact_path.unlink()
+
+        meta = {
+            "kind": "catboost_ranker",
+            "cases": len(cases),
+            "enabled": False,
+            "version": "fallback-v1",
+        }
+        trained_groups = 0
+        if len(cases) >= 50:
+            try:
+                from catboost import CatBoostRanker, Pool
+
+                from app.services.ranking.features import ordered_feature_values
+                from app.services.search_service import SearchService
+
+                search_service = SearchService(self.db)
+                feature_rows: list[list[float]] = []
+                labels: list[float] = []
+                group_ids: list[int] = []
+                sampled_cases = cases[: min(len(cases), 600)]
+                for group_id, case in enumerate(sampled_cases, start=1):
+                    response = search_service.search(
+                        query=case.query,
+                        customer_id=case.customer_id,
+                        session_id=None,
+                        limit=min(settings.RANKER_CANDIDATES, 24),
+                        offset=0,
+                        include_debug=False,
+                        enable_personalization=True,
+                        track_event=False,
+                    )
+                    rows = response.get("results", [])
+                    positive_rows = [
+                        row
+                        for row in rows
+                        if row["product"]["id"] == case.expected_ste_id
+                    ]
+                    negative_rows = [
+                        row
+                        for row in rows
+                        if row["product"]["id"] != case.expected_ste_id
+                    ]
+                    if not positive_rows or not negative_rows:
+                        continue
+                    for row in [*positive_rows[:1], *negative_rows[:7]]:
+                        feature_rows.append(
+                            ordered_feature_values(
+                                row.get("_rankingFeatures", {}),
+                                feed_mode=False,
+                            )
+                        )
+                        labels.append(1.0 if row["product"]["id"] == case.expected_ste_id else 0.0)
+                        group_ids.append(group_id)
+                    trained_groups += 1
+
+                if trained_groups >= 20 and feature_rows:
+                    pool = Pool(feature_rows, label=labels, group_id=group_ids)
+                    model = CatBoostRanker(
+                        iterations=60,
+                        depth=6,
+                        learning_rate=0.12,
+                        loss_function="YetiRankPairwise",
+                        verbose=False,
+                        random_seed=42,
+                    )
+                    model.fit(pool)
+                    model.save_model(str(artifact_path))
+                    meta = {
+                        "kind": "catboost_ranker",
+                        "cases": len(cases),
+                        "groups": trained_groups,
+                        "enabled": True,
+                        "version": "catboost-v1",
+                    }
+            except Exception:
+                trained_groups = 0
+
+        self._upsert_model_artifact(
+            cursor,
+            artifact_key="catboost_ranker",
+            path=artifact_path,
+            signature={"cases": len(cases), "groups": trained_groups},
+            meta=meta,
+        )
+        return 1 if meta.get("enabled") else 0
+
+    def _upsert_model_artifact(
+        self,
+        cursor,
+        *,
+        artifact_key: str,
+        path: Path,
+        signature: dict[str, Any],
+        meta: dict[str, Any],
+    ) -> None:
+        cursor.execute(
+            """
+            INSERT INTO model_artifacts (artifact_key, signature_json, path, meta_json, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(artifact_key) DO UPDATE SET
+                signature_json = excluded.signature_json,
+                path = excluded.path,
+                meta_json = excluded.meta_json,
+                updated_at = excluded.updated_at
+            """,
+            [
+                artifact_key,
+                json.dumps(signature, ensure_ascii=False),
+                str(path),
+                json.dumps(meta, ensure_ascii=False),
+                utcnow_iso(),
+            ],
+        )
+
+    def _infer_term_type(self, token: str) -> str:
+        normalized = normalize_text(token)
+        if not normalized:
+            return "token"
+        if looks_like_unit(normalized):
+            return "unit"
+        if is_alphanumeric_model(normalized):
+            return "model"
+        if normalized in {"smartbuy", "lenovo", "dell"}:
+            return "brand"
+        if any(character.isdigit() for character in normalized):
+            return "model"
+        return "token"
 
     def _open_detected_reader(
         self, path: Path, dataset_type: str, warnings: list[str]

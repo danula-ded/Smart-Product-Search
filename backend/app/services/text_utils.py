@@ -1,4 +1,4 @@
-"""Normalization, parsing, and scoring helpers for search and ingestion."""
+"""Normalization, tokenization, and lightweight domain helpers."""
 
 from __future__ import annotations
 
@@ -19,7 +19,8 @@ NUMBER_RE = re.compile(
     re.IGNORECASE,
 )
 LATIN_RE = re.compile(r"[a-z]", re.IGNORECASE)
-CYRILLIC_RE = re.compile(rf"[{CYRILLIC_RANGE}]")
+CYRILLIC_RE = re.compile(rf"[{CYRILLIC_RANGE}]", re.IGNORECASE)
+ALPHANUMERIC_RE = re.compile(rf"(?=.*[a-z{CYRILLIC_RANGE}])(?=.*\d)", re.IGNORECASE)
 
 STOPWORDS = {
     "и",
@@ -36,13 +37,84 @@ STOPWORDS = {
     "от",
     "до",
     "или",
+    "при",
+    "под",
+    "над",
+    "без",
     "the",
     "with",
     "and",
     "of",
 }
 
-SYNONYM_MAP = {
+UNIT_TOKENS = {
+    "мг",
+    "г",
+    "кг",
+    "мл",
+    "л",
+    "мм",
+    "см",
+    "м",
+    "гб",
+    "мб",
+    "тб",
+    "шт",
+    "уп",
+    "%",
+    "мг/мл",
+    "ме/мл",
+    "мкг",
+}
+
+RUSSIAN_SUFFIX_RULES = (
+    "иями",
+    "ями",
+    "ами",
+    "ями",
+    "ого",
+    "ему",
+    "ому",
+    "ыми",
+    "ими",
+    "иях",
+    "ах",
+    "ях",
+    "ов",
+    "ев",
+    "ей",
+    "ый",
+    "ий",
+    "ой",
+    "ая",
+    "яя",
+    "ое",
+    "ее",
+    "ые",
+    "ие",
+    "ым",
+    "им",
+    "ых",
+    "их",
+    "ую",
+    "юю",
+    "ам",
+    "ям",
+    "ом",
+    "ем",
+    "ах",
+    "ях",
+    "ы",
+    "и",
+    "а",
+    "я",
+    "е",
+    "у",
+    "ю",
+    "о",
+)
+
+SEED_SYNONYM_RULES = {
     "смартбай": "smartbuy",
     "смартбуй": "smartbuy",
     "смарт-бей": "smartbuy",
@@ -57,6 +129,11 @@ SYNONYM_MAP = {
     "flash": "usb",
     "флешнакопитель": "usb",
     "флеш-накопитель": "usb",
+    "рабочая": "рабочий",
+    "рабочие": "рабочий",
+    "рабочий": "рабочий",
+    "тетрадь": "тетрадь",
+    "тетради": "тетрадь",
     "ноут": "ноутбук",
     "ноуты": "ноутбук",
     "лэптоп": "ноутбук",
@@ -66,25 +143,35 @@ SYNONYM_MAP = {
     "мобила": "смартфон",
     "ручка": "канцтовары",
     "канцелярия": "канцтовары",
+    "канцелярские": "канцтовары",
+    "канцелярский": "канцтовары",
     "шина": "шины",
     "покрышка": "шины",
     "резина": "шины",
-    "тсм": "трансдермальная",
     "таб": "таблетки",
     "табл": "таблетки",
     "таблетка": "таблетки",
     "амп": "ампула",
+    "ампулы": "ампула",
     "ампу": "ампула",
+    "конфета": "конфеты",
+    "конфетами": "конфеты",
+    "конфет": "конфеты",
 }
 
-SYNONYM_GROUPS = {
-    "usb": ["флешка", "флэшка", "накопитель", "flash"],
-    "смартфон": ["телефон", "phone", "iphone"],
-    "ноутбук": ["ноут", "laptop", "notebook", "ультрабук"],
+SEED_SYNONYM_GROUPS = {
+    "usb": ["флешка", "флэшка", "накопитель", "flash", "usb"],
+    "смартфон": ["телефон", "phone", "iphone", "смартфон"],
+    "ноутбук": ["ноут", "laptop", "notebook", "ультрабук", "ноутбук"],
     "шины": ["шина", "покрышка", "tire", "tyre", "резина"],
-    "таблетки": ["таб", "табл", "таблетка", "tablets"],
-    "канцтовары": ["канцелярия", "ручка", "office"],
+    "таблетки": ["таб", "табл", "таблетка", "tablets", "таблетки"],
+    "канцтовары": ["канцелярия", "канцелярские", "ручка", "office"],
+    "конфеты": ["конфета", "конфетами", "конфет", "конфеты"],
+    "рабочий": ["рабочая", "рабочие", "рабочий"],
 }
+
+SYNONYM_MAP = dict(SEED_SYNONYM_RULES)
+SYNONYM_GROUPS = dict(SEED_SYNONYM_GROUPS)
 
 EN_TO_RU_LAYOUT = str.maketrans(
     "`qwertyuiop[]asdfghjkl;'zxcvbnm,./",
@@ -148,12 +235,41 @@ def tokenize(value: str | None) -> list[str]:
     return list(dict.fromkeys(tokens))
 
 
+def simple_russian_lemma(token: str) -> str:
+    normalized = normalize_text(token)
+    if not normalized or ALPHANUMERIC_RE.search(normalized):
+        return normalized
+    if not CYRILLIC_RE.search(normalized):
+        return normalized
+    if len(normalized) <= 4:
+        return normalized
+    for suffix in RUSSIAN_SUFFIX_RULES:
+        if normalized.endswith(suffix) and len(normalized) - len(suffix) >= 3:
+            stem = normalized[: -len(suffix)]
+            if stem:
+                return stem
+    return normalized
+
+
 def _contains_latin(value: str) -> bool:
     return bool(LATIN_RE.search(value))
 
 
 def _contains_cyrillic(value: str) -> bool:
     return bool(CYRILLIC_RE.search(value))
+
+
+def is_alphanumeric_model(token: str) -> bool:
+    normalized = normalize_text(token)
+    return bool(ALPHANUMERIC_RE.search(normalized))
+
+
+def looks_like_unit(token: str) -> bool:
+    normalized = normalize_text(token)
+    if normalized in UNIT_TOKENS:
+        return True
+    numeric_value, unit = parse_numeric_value(normalized)
+    return numeric_value is not None and unit is not None
 
 
 @lru_cache(maxsize=8192)
@@ -189,12 +305,25 @@ def expand_synonyms(tokens: Iterable[str]) -> tuple[list[str], list[str]]:
     return list(dict.fromkeys(expanded)), applied
 
 
+def build_seed_synonym_pairs() -> list[tuple[str, str]]:
+    pairs = {(normalize_text(alias), normalize_text(canonical)) for alias, canonical in SYNONYM_MAP.items()}
+    for canonical, aliases in SYNONYM_GROUPS.items():
+        canonical_norm = normalize_text(canonical)
+        pairs.add((canonical_norm, canonical_norm))
+        for alias in aliases:
+            pairs.add((normalize_text(alias), canonical_norm))
+    return sorted(pair for pair in pairs if pair[0] and pair[1])
+
+
 def build_search_text(
     title: str,
     category: str,
     attributes: list[tuple[str, str]],
     brand_guess: str | None = None,
     model_guess: str | None = None,
+    synonyms_map: dict[str, str] | None = None,
+    synonym_groups: dict[str, list[str]] | None = None,
+    include_lemmas: bool = True,
 ) -> str:
     parts = [normalize_text(title), normalize_text(category)]
     if brand_guess:
@@ -204,8 +333,25 @@ def build_search_text(
     for name, value in attributes:
         parts.append(normalize_text(name))
         parts.append(normalize_text(value))
-    tokens, _ = expand_synonyms(tokenize(" ".join(parts)))
-    return " ".join(tokens)
+
+    tokens = tokenize(" ".join(parts))
+    if include_lemmas:
+        base_tokens = list(tokens)
+        tokens.extend(simple_russian_lemma(token) for token in base_tokens)
+    tokens = [token for token in tokens if token]
+
+    if synonyms_map is None and synonym_groups is None:
+        expanded, _ = expand_synonyms(tokens)
+        return " ".join(expanded)
+
+    local_map = synonyms_map or {}
+    local_groups = synonym_groups or {}
+    expanded: list[str] = []
+    for token in tokens:
+        canonical = local_map.get(token, token)
+        expanded.append(canonical)
+        expanded.extend(local_groups.get(canonical, []))
+    return " ".join(dict.fromkeys(expanded))
 
 
 def parse_attributes(raw: str | None) -> list[tuple[str, str]]:
@@ -249,12 +395,12 @@ def guess_brand_and_model(title: str) -> tuple[str | None, str | None]:
     model = None
     for token in tokens[:6]:
         canonical = SYNONYM_MAP.get(token, token)
-        if canonical.isalpha() and len(canonical) > 2:
+        if canonical.isalpha() and len(canonical) > 2 and not CYRILLIC_RE.search(canonical):
             brand = canonical.upper() if canonical.isupper() else canonical.capitalize()
             break
 
     for token in tokens:
-        if len(token) >= 2 and any(character.isdigit() for character in token):
+        if is_alphanumeric_model(token):
             model = token.upper()
             break
 

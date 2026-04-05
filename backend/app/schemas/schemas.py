@@ -81,6 +81,13 @@ class QueryInterpretationSchema(BaseModel):
     layout_corrections: list[dict[str, Any]] = Field(alias="layoutCorrections")
     typo_corrections: list[dict[str, Any]] = Field(alias="typoCorrections")
     synonym_mappings: list[dict[str, Any]] = Field(alias="synonymMappings")
+    lemma_mappings: list[dict[str, Any]] = Field(
+        default_factory=list, alias="lemmaMappings"
+    )
+    spell_candidates: list[dict[str, Any]] = Field(
+        default_factory=list, alias="spellCandidates"
+    )
+    protected_tokens: list[str] = Field(default_factory=list, alias="protectedTokens")
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -93,6 +100,10 @@ class SearchResponseSchema(BaseModel):
     search_terms_used: list[str] = Field(alias="searchTermsUsed")
     query_interpretation: QueryInterpretationSchema = Field(alias="queryInterpretation")
     parser_source: str = Field(alias="parserSource")
+    parser_source_details: dict[str, Any] | None = Field(
+        default=None, alias="parserSourceDetails"
+    )
+    ranking_model_version: str | None = Field(default=None, alias="rankingModelVersion")
     profile_summary: ProfileSummarySchema | None = Field(
         default=None, alias="profileSummary"
     )
@@ -115,6 +126,9 @@ class SearchAnalysisResponseSchema(BaseModel):
     search_terms_used: list[str] = Field(alias="searchTermsUsed")
     query_interpretation: QueryInterpretationSchema = Field(alias="queryInterpretation")
     parser_source: str = Field(alias="parserSource")
+    parser_source_details: dict[str, Any] | None = Field(
+        default=None, alias="parserSourceDetails"
+    )
 
     model_config = ConfigDict(populate_by_name=True)
 
