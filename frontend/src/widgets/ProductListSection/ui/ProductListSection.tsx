@@ -3,7 +3,6 @@ import type { SearchResponse } from '@/shared/api'
 import { FeedbackLegend } from '@/features/search-products'
 import { SearchPagination } from '@/features/search-pagination'
 import { EmptyState } from '@/shared/ui'
-import { AppBadge } from '@/shared/ui'
 import { formatNumber } from '@/shared/lib/format'
 import { ProductGrid } from '@/widgets/ProductGrid'
 
@@ -47,14 +46,6 @@ export function ProductListSection({
               : 'Сначала выполни поиск.'}
           </div>
         </div>
-        {searchState ? (
-          <div className="flex flex-wrap gap-2">
-            <AppBadge tone="outline">Нормализация {searchState.timingsMs.normalize} ms</AppBadge>
-            <AppBadge tone="outline">Поиск {searchState.timingsMs.retrieve} ms</AppBadge>
-            <AppBadge tone="outline">Переранжирование {searchState.timingsMs.rerank} ms</AppBadge>
-            <AppBadge>Всего {searchState.timingsMs.total} ms</AppBadge>
-          </div>
-        ) : null}
       </div>
 
       {searchState ? <FeedbackLegend /> : null}

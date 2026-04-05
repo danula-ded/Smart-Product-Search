@@ -1,40 +1,36 @@
-import type { Health } from '@/shared/api'
-import { AppBadge, AppButton, AppCard, AppCardContent, AppLink } from '@/shared/ui'
+import { useLocation } from 'react-router-dom'
 
-type HeaderProps = {
-  health: Health | null
-  loadingData: boolean
-  onRefresh: () => void
-}
+import { getNavigationItem } from '@/shared/config'
+import { useWorkspace } from '@/shared/lib/workspace'
+import { AppButton, Loader } from '@/shared/ui'
 
-export function Header({ health, loadingData, onRefresh }: HeaderProps) {
+export function Header() {
+  const { pathname } = useLocation()
+  const navigationItem = getNavigationItem(pathname)
+  const { loadingData, refreshAll } = useWorkspace()
+
   return (
-    <AppCard tone="info" className="brand-shell">
-      <AppCardContent className="flex flex-col gap-4 py-1 md:flex-row md:items-center md:justify-between">
+    <header className="border-b border-[var(--semantic-border-default)] bg-[var(--semantic-background-elevated)]">
+      <div className="mx-auto flex w-full max-w-[1280px] flex-col gap-4 px-4 py-5 sm:px-6 xl:px-8 md:flex-row md:items-center md:justify-between">
         <div className="space-y-2">
-          <div className="flex flex-wrap items-center gap-2">
-            <AppBadge tone="outline">Smart Product Search</AppBadge>
-            <AppBadge tone={health?.status === 'healthy' ? 'accent' : 'danger'}>
-              {health?.status ?? 'offline'}
-            </AppBadge>
-            {loadingData ? <AppBadge tone="info">Обновляем состояние</AppBadge> : null}
+          <div className="text-xs font-semibold uppercase tracking-[0.12em] text-[var(--semantic-text-muted)]">
+            {navigationItem.label}
           </div>
           <div className="text-2xl font-semibold tracking-tight text-[var(--semantic-text-primary)]">
-            Каталог и персонализация в единой бренд-системе
+            {navigationItem.pageTitle}
           </div>
           <div className="max-w-[72ch] text-sm leading-6 text-[var(--semantic-text-secondary)]">
-            FSD-структура, единая цветовая палитра и production-ready интерфейс для поиска,
-            профилей, динамической выдачи и работы с данными.
+            {navigationItem.pageDescription}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <AppLink href="#search-workspace">К рабочей области</AppLink>
-          <AppButton variant="outline" onClick={onRefresh}>
-            Обновить данные
+        <div className="flex items-center gap-3">
+          <AppButton variant="outline" onClick={() => void refreshAll()} disabled={loadingData}>
+            {loadingData ? <Loader label="Обновляем" sizeClassName="size-4" /> : null}
+            {!loadingData ? 'Обновить данные' : null}
           </AppButton>
         </div>
-      </AppCardContent>
-    </AppCard>
+      </div>
+    </header>
   )
 }

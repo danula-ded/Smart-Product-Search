@@ -64,4 +64,12 @@
   --chart-3: var(--color-secondary-lime-emphasis);
   --chart-4: var(--color-primary-hover);
   --chart-5: var(--color-secondary-blue-hover);
+  --sidebar: var(--semantic-background-elevated);
+  --sidebar-foreground: var(--semantic-text-primary);
+  --sidebar-primary: var(--semantic-button-primary);
+  --sidebar-primary-foreground: var(--semantic-text-on-accent);
+  --sidebar-accent: var(--semantic-control-hover);
+  --sidebar-accent-foreground: var(--semantic-text-primary);
+  --sidebar-border: var(--semantic-border-default);
+  --sidebar-ring: var(--semantic-border-interactive);
 }

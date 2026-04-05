@@ -1,7 +1,6 @@
-import { useDeferredValue, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 
 import {
-  analyzeSearchQuery,
   bootstrapDefaultDataset,
   clearDataset,
   getDatasetSummary,
@@ -17,13 +16,12 @@ import {
   type DemoProfile,
   type Health,
   type MetricsSummary,
-  type SearchAnalysisResponse,
   type SearchFilters,
   type SearchResponse,
   type SearchResult,
   type UploadMode,
 } from '@/shared/api'
-import { pageSizeOptions, type TabId } from '@/shared/constants/search'
+import { pageSizeOptions } from '@/shared/constants/search'
 import { countActiveFilters, createSessionId, toggleArrayValue } from '@/shared/lib/search'
 
 type ExecuteSearchOptions = {
@@ -33,11 +31,9 @@ type ExecuteSearchOptions = {
   nextFilters?: SearchFilters
   nextPage?: number
   nextPageSize?: number
-  targetTab?: TabId
 }
 
-export function useHomePageModel() {
-  const [activeTab, setActiveTab] = useState<TabId>('search')
+export function useWorkspaceModel() {
   const [health, setHealth] = useState<Health | null>(null)
   const [summary, setSummary] = useState<DatasetSummary | null>(null)
   const [profiles, setProfiles] = useState<DemoProfile[]>([])
@@ -55,18 +51,15 @@ export function useHomePageModel() {
   const [query, setQuery] = useState('aktirf smartbuy 16')
   const [selectedCustomer, setSelectedCustomer] = useState('')
   const [sessionId, setSessionId] = useState(createSessionId())
-  const [includeDebug, setIncludeDebug] = useState(true)
+  const includeDebug = false
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState<number>(pageSizeOptions[0])
   const [filters, setFilters] = useState<SearchFilters>({})
   const [searchState, setSearchState] = useState<SearchResponse | null>(null)
   const [previousSearchState, setPreviousSearchState] = useState<SearchResponse | null>(null)
-  const [analysis, setAnalysis] = useState<SearchAnalysisResponse | null>(null)
-  const [analysisLoading, setAnalysisLoading] = useState(false)
   const [searching, setSearching] = useState(false)
   const [activeResult, setActiveResult] = useState<SearchResult | null>(null)
 
-  const deferredQuery = useDeferredValue(query.trim())
   const hasDataset = (summary?.counts.products ?? 0) > 0
   const activeFilterCount = countActiveFilters(filters)
   const displayedJob =
@@ -92,22 +85,6 @@ export function useHomePageModel() {
     })
   }, [previousSearchState, searchState])
 
-  const interpretation = searchState
-    ? {
-        correctedQuery: searchState.correctedQuery,
-        queryInterpretation: searchState.queryInterpretation,
-        appliedSynonyms: searchState.appliedSynonyms,
-        searchTermsUsed: searchState.searchTermsUsed,
-      }
-    : analysis
-      ? {
-          correctedQuery: analysis.correctedQuery,
-          queryInterpretation: analysis.queryInterpretation,
-          appliedSynonyms: analysis.appliedSynonyms,
-          searchTermsUsed: analysis.searchTermsUsed,
-        }
-      : null
-
   const categoryFacets = searchState?.facets?.categories ?? []
   const brandFacets = searchState?.facets?.brands ?? []
   const attributeFacets = searchState?.facets?.attributes ?? []
@@ -123,43 +100,6 @@ export function useHomePageModel() {
   useEffect(() => {
     void refreshAll()
   }, [])
-
-  useEffect(() => {
-    if (!deferredQuery) {
-      setAnalysis(null)
-      return
-    }
-
-    const controller = new AbortController()
-    const timeout = window.setTimeout(async () => {
-      setAnalysisLoading(true)
-      try {
-        const payload = await analyzeSearchQuery({ query: deferredQuery })
-        if (!controller.signal.aborted) {
-          setAnalysis(payload)
-        }
-      } catch {
-        if (!controller.signal.aborted) {
-          setAnalysis(null)
-        }
-      } finally {
-        if (!controller.signal.aborted) {
-          setAnalysisLoading(false)
-        }
-      }
-    }, 220)
-
-    return () => {
-      controller.abort()
-      window.clearTimeout(timeout)
-    }
-  }, [deferredQuery])
-
-  useEffect(() => {
-    if (activeTab === 'metrics' && !metrics && !metricsLoading) {
-      void refreshMetrics()
-    }
-  }, [activeTab, metrics, metricsLoading])
 
   async function refreshAll() {
     setLoadingData(true)
@@ -184,7 +124,9 @@ export function useHomePageModel() {
       const selectedStillValid = profilesResult.some(
         (profile) => profile.customerId === selectedCustomer,
       )
-      setSelectedCustomer(selectedStillValid ? selectedCustomer : (profilesResult[0]?.customerId ?? ''))
+      setSelectedCustomer(
+        selectedStillValid ? selectedCustomer : (profilesResult[0]?.customerId ?? ''),
+      )
     } catch (caught) {
       setError(
         caught instanceof Error ? caught.message : 'Не удалось загрузить состояние системы.',
@@ -281,7 +223,6 @@ export function useHomePageModel() {
       setSearchState(payload)
       setPage(resolvedPage)
       setPageSize(requestedPageSize)
-      setActiveTab(options?.targetTab ?? 'search')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось выполнить поиск.')
     } finally {
@@ -298,7 +239,6 @@ export function useHomePageModel() {
       setMetrics(null)
       resetSearchState()
       await refreshAll()
-      setActiveTab('search')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось выполнить дозагрузку.')
     } finally {
@@ -318,7 +258,6 @@ export function useHomePageModel() {
       setMetrics(null)
       resetSearchState()
       await refreshAll()
-      setActiveTab('search')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось загрузить базовый датасет.')
     } finally {
@@ -341,7 +280,6 @@ export function useHomePageModel() {
       setMetrics(null)
       resetSearchState()
       await refreshAll()
-      setActiveTab('data')
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : 'Не удалось очистить базу.')
     } finally {
@@ -425,7 +363,7 @@ export function useHomePageModel() {
   }
 
   function startSearch() {
-    void executeSearch({ targetTab: 'search', nextPage: 1 })
+    void executeSearch({ nextPage: 1 })
   }
 
   function startNewSession() {
@@ -455,7 +393,6 @@ export function useHomePageModel() {
   }
 
   return {
-    activeTab,
     health,
     summary,
     profiles,
@@ -471,14 +408,11 @@ export function useHomePageModel() {
     query,
     selectedCustomer,
     sessionId,
-    includeDebug,
     filters,
     searchState,
-    analysisLoading,
     searching,
     activeResult,
     comparisonRows,
-    interpretation,
     categoryFacets,
     brandFacets,
     attributeFacets,
@@ -490,12 +424,10 @@ export function useHomePageModel() {
     activeFilterCount,
     displayedJob,
     pageSize,
-    setActiveTab,
     setMode,
     setSteFile,
     setContractsFile,
     setQuery,
-    setIncludeDebug,
     refreshAll,
     refreshMetrics,
     handleUpload,
@@ -513,3 +445,5 @@ export function useHomePageModel() {
     getResultPosition,
   }
 }
+
+export type WorkspaceModel = ReturnType<typeof useWorkspaceModel>
